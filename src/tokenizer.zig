@@ -8,6 +8,7 @@ pub const Token = struct {
 
     pub const keywords = std.ComptimeStringMap(Tag, .{
         .{ "account", .keyword_account },
+        .{ "apply account", .keyword_apply_account },
         .{ "apply tag", .keyword_apply_tag },
     });
 
@@ -24,6 +25,7 @@ pub const Token = struct {
         pending,
         keyword_account,
         keyword_apply_tag,
+        keyword_apply_account,
         invalid,
         eof,
     };
@@ -284,6 +286,7 @@ test "keywords" {
     try testTokenize("account a:b:c", &.{ .keyword_account, .identifier });
     try testTokenize("account a:b:c\n", &.{ .keyword_account, .identifier });
     try testTokenize("apply tag abc\n", &.{ .keyword_apply_tag, .identifier });
+    try testTokenize("apply account abc\n", &.{ .keyword_apply_account, .identifier });
 }
 
 test "indentations" {
