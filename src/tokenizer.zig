@@ -113,10 +113,12 @@ pub const Tokenizer = struct {
                     '!' => {
                         state = .status;
                         result.tag = .pending;
+                        result.loc.start = self.index;
                     },
                     '*' => {
                         state = .status;
                         result.tag = .cleared;
+                        result.loc.start = self.index;
                     },
                     else => {
                         std.log.info("start saw '{c}'", .{c});
@@ -128,13 +130,11 @@ pub const Tokenizer = struct {
                 },
 
                 .status => switch (c) {
-                    ' ', '\t' => {
-                        break;
+                    ' ', '\t', '\n', '\r' => break,
+                    else => {
+                        state = .identifier;
+                        result.tag = .identifier;
                     },
-                    '\n', '\r' => {
-                        break;
-                    },
-                    else => {},
                 },
 
                 .comment => switch (c) {
@@ -218,6 +218,8 @@ test "finds cleared and pending" {
 
     try testTokenize("2020 ! abc", &.{ .date, .pending, .identifier });
     try testTokenize("2020-01 * abc", &.{ .date, .cleared, .identifier });
+
+    try testTokenize("2020-01 *abc", &.{ .date, .identifier });
 }
 
 test "finds comments" {
