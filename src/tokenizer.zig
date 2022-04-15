@@ -138,7 +138,10 @@ pub const Tokenizer = struct {
                     },
                     ';', '#' => {
                         if (seen_spaces >= 2) {
-                            std.log.info("enter comment from idenfifier", .{});
+                            // need to return the identifier and move into the comment
+                            // so we backtrack to catch the comment opener
+                            self.index -= 1;
+                            break;
                         }
                     },
                     'a'...'z' => {},
@@ -188,7 +191,10 @@ fn testTokenize(source: [:0]const u8, expected_tokens: []const Token.Tag) !void 
 test "finds comments" {
     std.testing.log_level = .debug;
     std.log.info("\n", .{});
+
     try testTokenize("; hi", &.{.comment});
+    try testTokenize("2020 abc  ; xyz", &.{ .date, .identifier, .comment });
+    try testTokenize("\t ; xyz", &.{ .posting_indentation, .comment });
 }
 
 test "finds dates" {
