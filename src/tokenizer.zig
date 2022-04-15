@@ -8,6 +8,7 @@ pub const Token = struct {
 
     pub const keywords = std.ComptimeStringMap(Tag, .{
         .{ "account", .keyword_account },
+        .{ "apply tag", .keyword_apply_tag },
     });
 
     pub fn getKeyword(bytes: []const u8) ?Tag {
@@ -22,6 +23,7 @@ pub const Token = struct {
         cleared,
         pending,
         keyword_account,
+        keyword_apply_tag,
         invalid,
         eof,
     };
@@ -166,8 +168,8 @@ pub const Tokenizer = struct {
                         if (result.loc.start == 0) {
                             if (Token.getKeyword(self.buffer[result.loc.start..self.index])) |tag| {
                                 result.tag = tag;
+                                break;
                             }
-                            break;
                         }
 
                         seen_spaces += if (c == ' ') 1 else transaction_indentation;
@@ -281,6 +283,7 @@ test "keywords" {
     try testTokenize("\taccount", &.{ .indentation, .identifier });
     try testTokenize("account a:b:c", &.{ .keyword_account, .identifier });
     try testTokenize("account a:b:c\n", &.{ .keyword_account, .identifier });
+    try testTokenize("apply tag abc\n", &.{ .keyword_apply_tag, .identifier });
 }
 
 test "indentations" {
