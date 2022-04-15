@@ -7,7 +7,7 @@ pub const Token = struct {
     loc: Loc,
 
     pub const Tag = enum {
-        posting_indentation,
+        indentation,
         comment,
         date,
         identifier, // payee, account
@@ -42,7 +42,7 @@ pub const Tokenizer = struct {
 
     const State = enum {
         start,
-        posting_indentation,
+        indentation,
         comment, // both file and transaction level
         date,
         identifier, // payee, account
@@ -84,8 +84,8 @@ pub const Tokenizer = struct {
                             // Are the spaces at the start of the line?
                             std.log.info("{d} + 1 - {d} <= {d}", .{ self.index, seen_spaces, result.loc.start });
                             if (self.index + 1 <= result.loc.start + seen_spaces) {
-                                state = .posting_indentation;
-                                result.tag = .posting_indentation;
+                                state = .indentation;
+                                result.tag = .indentation;
                                 self.index += 1;
                                 break;
                             }
@@ -221,7 +221,7 @@ test "transactions" {
         \\2020 ! abc
         \\    x:y:z
         \\    x:y:z
-    , &.{ .date, .pending, .identifier, .posting_indentation, .identifier, .posting_indentation, .identifier });
+    , &.{ .date, .pending, .identifier, .indentation, .identifier, .indentation, .identifier });
 }
 
 test "finds cleared and pending" {
@@ -240,7 +240,7 @@ test "finds comments" {
 
     try testTokenize("; hi", &.{.comment});
     try testTokenize("2020 abc  ; xyz", &.{ .date, .identifier, .comment });
-    try testTokenize("\t ; xyz", &.{ .posting_indentation, .comment });
+    try testTokenize("\t ; xyz", &.{ .indentation, .comment });
 }
 
 test "finds dates" {
@@ -254,6 +254,6 @@ test "finds posting indentations" {
     std.testing.log_level = .debug;
     std.log.info("\n", .{});
 
-    try testTokenize(" \n    abc def", &.{ .posting_indentation, .identifier });
-    try testTokenize(" \n\txyz", &.{ .posting_indentation, .identifier });
+    try testTokenize(" \n    abc def", &.{ .indentation, .identifier });
+    try testTokenize(" \n\txyz", &.{ .indentation, .identifier });
 }
