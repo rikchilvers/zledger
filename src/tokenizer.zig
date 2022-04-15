@@ -6,6 +6,14 @@ pub const Token = struct {
     tag: Tag,
     loc: Loc,
 
+    pub const keywords = std.ComptimeStringMap(Tag, .{
+        .{ "account", .keyword_account },
+    });
+
+    pub fn getKeyword(bytes: []const u8) ?Tag {
+        return keywords.get(bytes);
+    }
+
     pub const Tag = enum {
         indentation,
         comment,
@@ -13,6 +21,7 @@ pub const Token = struct {
         identifier, // payee, account
         cleared,
         pending,
+        keyword_account,
         invalid,
         eof,
     };
@@ -45,7 +54,7 @@ pub const Tokenizer = struct {
         indentation,
         comment, // both file and transaction level
         date,
-        identifier, // payee, account
+        identifier, // payee, account, keywords
         status, // pending or cleared
     };
 
@@ -103,8 +112,6 @@ pub const Tokenizer = struct {
                         result.loc.start = self.index;
                     },
                     'a'...'z', 'A'...'Z' => {
-                        std.log.info("start saw a-z with {d} spaces", .{seen_spaces});
-
                         state = .identifier;
                         result.tag = .identifier;
                         result.loc.start = self.index;
@@ -155,6 +162,14 @@ pub const Tokenizer = struct {
 
                 .identifier => switch (c) {
                     ' ', '\t' => {
+                        // this could be a keyword if it begins at the start of the line
+                        if (result.loc.start == 0) {
+                            if (Token.getKeyword(self.buffer[result.loc.start..self.index])) |tag| {
+                                result.tag = tag;
+                            }
+                            break;
+                        }
+
                         seen_spaces += if (c == ' ') 1 else transaction_indentation;
                     },
                     ';', '#' => {
@@ -169,7 +184,15 @@ pub const Tokenizer = struct {
                     'a'...'z', 'A'...'Z', '0'...'9', ':' => {
                         seen_spaces = 0;
                     },
-                    else => break,
+                    else => {
+                        // this could be a keyword if it begins at the start of the line
+                        if (result.loc.start == 0) {
+                            if (Token.getKeyword(self.buffer[result.loc.start..self.index])) |tag| {
+                                result.tag = tag;
+                            }
+                        }
+                        break;
+                    },
                 },
 
                 else => {
@@ -220,8 +243,9 @@ test "transactions" {
         \\
         \\2020 ! abc
         \\    x:y:z
+        \\    ; comment
         \\    x:y:z
-    , &.{ .date, .pending, .identifier, .indentation, .identifier, .indentation, .identifier });
+    , &.{ .date, .pending, .identifier, .indentation, .identifier, .indentation, .comment, .indentation, .identifier });
 }
 
 test "finds cleared and pending" {
@@ -248,6 +272,15 @@ test "finds dates" {
     std.log.info("\n", .{});
 
     try testTokenize("2021-02-03", &.{.date});
+}
+
+test "keywords" {
+    std.testing.log_level = .debug;
+    std.log.info("\n", .{});
+
+    try testTokenize("\taccount", &.{ .indentation, .identifier });
+    try testTokenize("account a:b:c", &.{ .keyword_account, .identifier });
+    try testTokenize("account a:b:c\n", &.{ .keyword_account, .identifier });
 }
 
 test "finds posting indentations" {
