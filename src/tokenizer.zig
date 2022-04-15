@@ -11,6 +11,8 @@ pub const Token = struct {
         comment,
         date,
         identifier, // payee, account
+        cleared,
+        pending,
         invalid,
         eof,
     };
@@ -44,6 +46,7 @@ pub const Tokenizer = struct {
         comment, // both file and transaction level
         date,
         identifier, // payee, account
+        status, // pending or cleared
     };
 
     pub fn next(self: *Tokenizer) Token {
@@ -107,6 +110,14 @@ pub const Tokenizer = struct {
                         result.loc.start = self.index;
                         seen_spaces = 0;
                     },
+                    '!' => {
+                        state = .status;
+                        result.tag = .pending;
+                    },
+                    '*' => {
+                        state = .status;
+                        result.tag = .cleared;
+                    },
                     else => {
                         std.log.info("start saw '{c}'", .{c});
                         result.tag = .invalid;
@@ -114,6 +125,16 @@ pub const Tokenizer = struct {
                         self.index += 1;
                         return result;
                     },
+                },
+
+                .status => switch (c) {
+                    ' ', '\t' => {
+                        break;
+                    },
+                    '\n', '\r' => {
+                        break;
+                    },
+                    else => {},
                 },
 
                 .comment => switch (c) {
@@ -189,6 +210,14 @@ fn testTokenize(source: [:0]const u8, expected_tokens: []const Token.Tag) !void 
     const last_token = tokenizer.next();
     try std.testing.expectEqual(Token.Tag.eof, last_token.tag);
     try std.testing.expectEqual(source.len, last_token.loc.start);
+}
+
+test "finds cleared and pending" {
+    std.testing.log_level = .debug;
+    std.log.info("\n", .{});
+
+    try testTokenize("2020 ! abc", &.{ .date, .pending, .identifier });
+    try testTokenize("2020-01 * abc", &.{ .date, .cleared, .identifier });
 }
 
 test "finds comments" {
