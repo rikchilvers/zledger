@@ -212,6 +212,18 @@ fn testTokenize(source: [:0]const u8, expected_tokens: []const Token.Tag) !void 
     try std.testing.expectEqual(source.len, last_token.loc.start);
 }
 
+test "transactions" {
+    std.testing.log_level = .debug;
+    std.log.info("\n", .{});
+
+    try testTokenize(
+        \\
+        \\2020 ! abc
+        \\    x:y:z
+        \\    x:y:z
+    , &.{ .date, .pending, .identifier, .posting_indentation, .identifier, .posting_indentation, .identifier });
+}
+
 test "finds cleared and pending" {
     std.testing.log_level = .debug;
     std.log.info("\n", .{});
