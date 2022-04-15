@@ -248,7 +248,7 @@ test "transactions" {
     , &.{ .date, .pending, .identifier, .indentation, .identifier, .indentation, .comment, .indentation, .identifier });
 }
 
-test "finds cleared and pending" {
+test "cleared and pending" {
     std.testing.log_level = .debug;
     std.log.info("\n", .{});
 
@@ -258,7 +258,7 @@ test "finds cleared and pending" {
     try testTokenize("2020-01 *abc", &.{ .date, .identifier });
 }
 
-test "finds comments" {
+test "comments" {
     std.testing.log_level = .debug;
     std.log.info("\n", .{});
 
@@ -267,7 +267,7 @@ test "finds comments" {
     try testTokenize("\t ; xyz", &.{ .indentation, .comment });
 }
 
-test "finds dates" {
+test "dates" {
     std.testing.log_level = .debug;
     std.log.info("\n", .{});
 
@@ -283,7 +283,7 @@ test "keywords" {
     try testTokenize("account a:b:c\n", &.{ .keyword_account, .identifier });
 }
 
-test "finds posting indentations" {
+test "indentations" {
     std.testing.log_level = .debug;
     std.log.info("\n", .{});
 
