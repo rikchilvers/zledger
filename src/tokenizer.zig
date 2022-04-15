@@ -144,7 +144,10 @@ pub const Tokenizer = struct {
                             break;
                         }
                     },
-                    'a'...'z' => {},
+                    // TODO: convert chars to unicode values and use a range so we can include more
+                    'a'...'z', 'A'...'Z', '0'...'9', ':' => {
+                        seen_spaces = 0;
+                    },
                     else => break,
                 },
 
@@ -208,6 +211,6 @@ test "finds posting indentations" {
     std.testing.log_level = .debug;
     std.log.info("\n", .{});
 
-    try testTokenize(" \n    abc", &.{ .posting_indentation, .identifier });
+    try testTokenize(" \n    abc def", &.{ .posting_indentation, .identifier });
     try testTokenize(" \n\txyz", &.{ .posting_indentation, .identifier });
 }
