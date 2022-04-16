@@ -21,11 +21,11 @@ pub const Token = struct {
         comment,
         date,
         identifier, // payee, account
-        cleared,
-        pending,
+        status_cleared,
+        status_pending,
         keyword_account,
-        keyword_apply_tag,
         keyword_apply_account,
+        keyword_apply_tag,
         invalid,
         eof,
     };
@@ -105,7 +105,6 @@ pub const Tokenizer = struct {
                         }
                     },
                     ';', '#' => {
-                        std.log.info("start saw comment", .{});
                         state = .comment;
                         result.tag = .comment;
                         result.loc.start = self.index + 1;
@@ -123,12 +122,12 @@ pub const Tokenizer = struct {
                     },
                     '!' => {
                         state = .status;
-                        result.tag = .pending;
+                        result.tag = .status_pending;
                         result.loc.start = self.index;
                     },
                     '*' => {
                         state = .status;
-                        result.tag = .cleared;
+                        result.tag = .status_cleared;
                         result.loc.start = self.index;
                     },
                     else => {
@@ -249,15 +248,15 @@ test "transactions" {
         \\    x:y:z
         \\    ; comment
         \\    x:y:z
-    , &.{ .date, .pending, .identifier, .indentation, .identifier, .indentation, .comment, .indentation, .identifier });
+    , &.{ .date, .status_pending, .identifier, .indentation, .identifier, .indentation, .comment, .indentation, .identifier });
 }
 
 test "cleared and pending" {
     std.testing.log_level = .debug;
     std.log.info("\n", .{});
 
-    try testTokenize("2020 ! abc", &.{ .date, .pending, .identifier });
-    try testTokenize("2020-01 * abc", &.{ .date, .cleared, .identifier });
+    try testTokenize("2020 ! abc", &.{ .date, .status_pending, .identifier });
+    try testTokenize("2020-01 * abc", &.{ .date, .status_cleared, .identifier });
 
     try testTokenize("2020-01 *abc", &.{ .date, .identifier });
 }
