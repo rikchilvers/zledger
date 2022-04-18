@@ -231,12 +231,14 @@ test "transactions" {
     std.log.info("\n", .{});
 
     try testTokenize(
-        \\
+        \\2020 abc
+        \\    x:y
+        \\    x:y
         \\2020 ! abc
         \\    x:y:z
         \\    ; comment
         \\    x:y:z
-    , &.{ .date, .status_pending, .identifier, .indentation, .identifier, .indentation, .comment, .indentation, .identifier });
+    , &.{ .date, .identifier, .indentation, .identifier, .indentation, .identifier, .date, .status_pending, .identifier, .indentation, .identifier, .indentation, .comment, .indentation, .identifier });
 }
 
 test "cleared and pending" {
