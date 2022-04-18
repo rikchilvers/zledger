@@ -36,7 +36,6 @@ pub const Token = struct {
     };
 };
 
-/// A thing
 pub const Tokenizer = struct {
     buffer: [:0]const u8,
     index: usize,
@@ -81,7 +80,6 @@ pub const Tokenizer = struct {
         // var remaining_code_units: usize = undefined;
         while (true) : (self.index += 1) {
             const c = self.buffer[self.index];
-            std.log.info("while switching on '{c}' as {s}", .{ c, state });
             switch (state) {
                 .start => switch (c) {
                     0 => break,
@@ -91,11 +89,9 @@ pub const Tokenizer = struct {
                     },
                     ' ', '\t' => {
                         seen_spaces += if (c == ' ') 1 else transaction_indentation;
-                        // std.log.info("seen {d} spaces", .{seen_spaces});
 
                         if (seen_spaces >= transaction_indentation) {
                             // Are the spaces at the start of the line?
-                            std.log.info("{d} + 1 - {d} <= {d}", .{ self.index, seen_spaces, result.loc.start });
                             if (self.index + 1 <= result.loc.start + seen_spaces) {
                                 state = .indentation;
                                 result.tag = .indentation;
@@ -131,7 +127,6 @@ pub const Tokenizer = struct {
                         result.loc.start = self.index;
                     },
                     else => {
-                        std.log.info("start saw '{c}'", .{c});
                         result.tag = .invalid;
                         result.loc.end = self.index;
                         self.index += 1;
@@ -148,12 +143,8 @@ pub const Tokenizer = struct {
                 },
 
                 .comment => switch (c) {
-                    '\n', '\r' => {
-                        std.log.info("comment saw line break", .{});
-                        break;
-                    },
+                    '\n', '\r' => break,
                     else => {
-                        std.log.info("comment saw any char", .{});
                         if (self.index == self.buffer.len) break;
                     },
                 },
@@ -199,7 +190,6 @@ pub const Tokenizer = struct {
                 },
 
                 else => {
-                    std.log.info("switch didn't match anything", .{});
                     result.tag = .invalid;
                     result.loc.end = self.index;
                     self.index += 1;
@@ -207,7 +197,6 @@ pub const Tokenizer = struct {
                 },
             }
         }
-        std.log.info("end of while", .{});
 
         if (result.tag == .eof) {
             if (self.pending_invalid_token) |token| {
@@ -226,7 +215,6 @@ fn testTokenize(source: [:0]const u8, expected_tokens: []const Token.Tag) !void 
     var tokenizer = Tokenizer.init(source);
     for (expected_tokens) |expected_token_id| {
         const token = tokenizer.next();
-        std.log.info(">> test got {s}", .{token.tag});
         if (token.tag != expected_token_id) {
             std.debug.panic("expected {s}, found {s}\n", .{
                 @tagName(expected_token_id), @tagName(token.tag),
