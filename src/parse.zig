@@ -1,6 +1,8 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Ast = @import("./ast.zig");
+const AstError = Ast.Error;
 const Node = Ast.Node;
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
 const TokenIndex = Ast.TokenIndex;
@@ -30,14 +32,14 @@ pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!void {
         .token_starts = tokens.items(.start),
         .tok_i = 0,
         .nodes = .{},
-        // .errors = .{},
+        .errors = .{},
+        .scratch = .{},
         // .extra_data = .{},
-        // .scratch = .{},
     };
     defer parser.nodes.deinit(gpa);
-    // defer parser.errors.deinit(gpa);
+    defer parser.errors.deinit(gpa);
+    defer parser.scratch.deinit(gpa);
     // defer parser.extra_data.deinit(gpa);
-    // defer parser.scratch.deinit(gpa);
 
     // A ledger file has more tokens than nodes (e.g., indentation is not a node) so this is conservative
     try parser.nodes.ensureTotalCapacity(gpa, tokens.len);
@@ -50,7 +52,8 @@ pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!void {
         .data = undefined,
     });
 
-    _ = try parser.parseTopLevel();
+    // FIXME: this works when caught as unreachable
+    try parser.parseTopLevel();
 }
 
 const Parser = struct {
@@ -63,10 +66,10 @@ const Parser = struct {
     /// the index to the current token that the parser is looking at (starting at 0)
     tok_i: TokenIndex,
 
-    // errors: std.ArrayListUnmanaged(AstError),
     nodes: Ast.NodeList,
+    errors: std.ArrayListUnmanaged(AstError),
+    scratch: std.ArrayListUnmanaged(Node.Index),
     // extra_data: std.ArrayListUnmanaged(Node.Index),
-    // scratch: std.ArrayListUnmanaged(Node.Index),
 
     /// 
     const Members = struct {
@@ -85,19 +88,71 @@ const Parser = struct {
         }
     };
 
+    fn addNode(p: *Parser, elem: Ast.NodeList.Elem) Allocator.Error!Node.Index {
+        const result = @intCast(Node.Index, p.nodes.len);
+        try p.nodes.append(p.gpa, elem);
+        return result;
+    }
+
+    fn warnMsg(p: *Parser, msg: Ast.Error) error{OutOfMemory}!void {
+        @setCold(true);
+        switch (msg.tag) {
+            .expected_token => if (msg.token != 0 and !p.tokensOnSameLine(msg.token - 1, msg.token)) {
+                var copy = msg;
+                copy.token_is_prev = true;
+                copy.token -= 1;
+                return p.errors.append(p.gpa, copy);
+            },
+            // else => {},
+        }
+        try p.errors.append(p.gpa, msg);
+    }
+
+    fn failMsg(p: *Parser, msg: Ast.Error) error{ ParseError, OutOfMemory } {
+        @setCold(true);
+        try p.warnMsg(msg);
+        return error.ParseError;
+    }
+
     fn parseTopLevel(p: *Parser) !void {
         while (true) {
             const current_tag = p.token_tags[p.tok_i];
+            std.log.info("parseTopLevel saw {s}", .{current_tag});
             switch (current_tag) {
                 .eof => break,
+                .keyword_account => {
+                    const keyword_account_node = try p.expectAccountDirective();
+                    if (keyword_account_node != 0) {
+                        try p.scratch.append(p.gpa, keyword_account_node);
+                    } else {
+                        std.log.info("keyword_account_node was 0", .{});
+                    }
+                    // Start a new transaction
+                },
                 else => {
-                    std.log.info("parseTopLevel saw {s}", .{current_tag});
                     _ = p.eatToken(current_tag);
                 },
             }
         }
 
         return;
+    }
+
+    /// AccountDirective <- KEYWORD_account IDENTIFIER
+    fn expectAccountDirective(p: *Parser) !Node.Index {
+        const keyword_token = p.assertToken(.keyword_account);
+        const account_token = try p.expectToken(.identifier);
+
+        return p.addNode(.{ .tag = .account_directive_decl, .main_token = keyword_token, .data = .{
+            .lhs = account_token,
+            .rhs = 0,
+        } });
+    }
+
+    fn assertToken(p: *Parser, tag: Token.Tag) TokenIndex {
+        const token = p.nextToken();
+        assert(p.token_tags[token] == tag);
+        return token;
     }
 
     fn expectToken(p: *Parser, tag: Token.Tag) Error!TokenIndex {
@@ -119,6 +174,10 @@ const Parser = struct {
         const result = p.tok_i;
         p.tok_i += 1;
         return result;
+    }
+
+    fn tokensOnSameLine(p: *Parser, token1: TokenIndex, token2: TokenIndex) bool {
+        return std.mem.indexOfScalar(u8, p.source[p.token_starts[token1]..p.token_starts[token2]], '\n') == null;
     }
 };
 

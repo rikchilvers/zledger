@@ -20,6 +20,22 @@ tokens: TokenList.Slice,
 /// references to the root node, this means 0 is available to indicate null.
 nodes: NodeList.Slice,
 
+pub const Error = struct {
+    tag: Tag,
+    /// True if `token` points to the token before the token causing an issue.
+    token_is_prev: bool = false,
+    token: TokenIndex,
+    extra: union {
+        none: void,
+        expected_tag: Token.Tag,
+    } = .{ .none = {} },
+
+    pub const Tag = enum {
+        /// `expected_tag` is populated.
+        expected_token,
+    };
+};
+
 pub const Node = struct {
     tag: Tag,
     main_token: TokenIndex,
@@ -35,13 +51,8 @@ pub const Node = struct {
 
     pub const Tag = enum {
         root,
-        command_directive,
-        transaction,
-        date,
-        status,
-        payee,
-        account,
-        comment_file,
-        comment_transcaction,
+        /// lhs is the account.
+        /// rhs is unused.
+        account_directive_decl,
     };
 };
