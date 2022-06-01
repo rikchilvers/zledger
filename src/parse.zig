@@ -1,27 +1,20 @@
 const std = @import("std");
-const datetime = @import("datetime").datetime;
-
 const assert = std.debug.assert;
-
-const Date = datetime.Date;
-
 const Allocator = std.mem.Allocator;
+
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
 const Token = @import("./tokenizer.zig").Token;
 
+const Tree = @import("./tree.zig");
+const Node = Tree.Node;
+const TokenIndex = Tree.TokenIndex;
+
 pub const Error = error{ParseError} || Allocator.Error;
 
-// TODO: why do we use a u32 as the offset and not, say, u8?
-pub const ByteOffset = u32;
-pub const TokenIndex = u32;
+const null_node: Node.Index = 0;
 
-pub const TokenList = std.MultiArrayList(struct {
-    tag: Token.Tag,
-    start: ByteOffset,
-});
-
-pub fn parse(gpa: Allocator, source: [:0]const u8) !void {
-    var tokens = TokenList{};
+pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!Tree {
+    var tokens = Tree.TokenList{};
     defer tokens.deinit(gpa);
 
     var tokenizer = Tokenizer.init(source);
@@ -38,48 +31,58 @@ pub fn parse(gpa: Allocator, source: [:0]const u8) !void {
     var parser: Parser = .{
         .gpa = gpa,
         .source = source,
-        .warnings = std.ArrayList(Parser.Warning).init(gpa),
+        .errors = std.ArrayList(Tree.Error).init(gpa),
+        .nodes = .{},
+        .extra_data = std.ArrayList(Node.Index).init(gpa),
         .token_tags = tokens.items(.tag),
         .token_starts = tokens.items(.start),
         .token_index = 0,
     };
+    defer parser.errors.deinit();
+    defer parser.nodes.deinit(gpa);
+    defer parser.extra_data.deinit();
+
+    // Root node must be index 0.
+    parser.nodes.appendAssumeCapacity(.{
+        .tag = .root,
+        .main_token = 0,
+        .data = undefined,
+    });
 
     try parser.start();
+
+    return Tree{
+        .source = source,
+        .tokens = tokens.toOwnedSlice(),
+        .nodes = parser.nodes.toOwnedSlice(),
+        .extra_data = parser.extra_data.toOwnedSlice(),
+        .errors = parser.errors.toOwnedSlice(),
+    };
 }
 
+/// Converts a stream of Tokens into a stream of Nodes
 const Parser = struct {
-    const Warning = struct {
-        tag: Tag,
-        /// True if `token` points to the token before the token causing an issue.
-        token_is_prev: bool = false,
-        token: TokenIndex,
-        extra: union {
-            none: void,
-            expected_tag: Token.Tag,
-        } = .{ .none = {} },
-
-        pub const Tag = enum {
-            /// `expected_tag` is populated.
-            expected_token,
-        };
-    };
-
     gpa: Allocator,
     source: []const u8,
-    warnings: std.ArrayList(Warning),
+    errors: std.ArrayList(Tree.Error),
+    nodes: Tree.NodeList,
+    /// Additional information associated with a Node (e.g. postings for a transaction)
+    /// Use Tree.extraData() to extra the data
+    extra_data: std.ArrayList(Node.Index),
 
     /// token_tags.len == token_starts.len as they're the deconstructed results of tokenization
     token_tags: []const Token.Tag,
-    token_starts: []const ByteOffset,
+    token_starts: []const Tree.ByteOffset,
     /// the index to the current token that the parser is looking at (starting at 0)
     token_index: TokenIndex,
 
-    fn start(p: *Parser) !void {
+    fn start(p: *Parser) Allocator.Error!void {
         while (true) {
             std.log.info("parser saw {s}", .{p.token_tags[p.token_index]});
             switch (p.token_tags[p.token_index]) {
                 .date => {
-                    _ = try p.expectTransaction();
+                    _ = try p.expectTransactionRecoverable();
+                    // TODO: add the node if it's not 0
                 },
                 .eof => {
                     break;
@@ -91,9 +94,37 @@ const Parser = struct {
         }
     }
 
-    fn expectTransaction(p: *Parser) !Transaction {
+    fn expectTransactionRecoverable(p: *Parser) !Node.Index {
+        return p.expectTransaction() catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.ParseError => {
+                p.findNextBlock();
+                return null_node;
+            },
+        };
+    }
+
+    fn expectTransaction(p: *Parser) !Node.Index {
         _ = try p.expectToken(.date);
-        unreachable;
+        _ = p.possibleToken(.status);
+        _ = try p.expectToken(.identifier);
+
+        return null_node;
+    }
+
+    /// Attempts to find next block by searching for certain tokens
+    fn findNextBlock(p: *Parser) void {
+        while (true) {
+            const token = p.nextToken();
+            switch (p.token_tags[token]) {
+                // any of these can start a new block
+                .date => {
+                    p.token_index -= 1;
+                    return;
+                },
+                else => {},
+            }
+        }
     }
 
     fn expectToken(p: *Parser, tag: Token.Tag) Error!TokenIndex {
@@ -107,25 +138,30 @@ const Parser = struct {
         return p.nextToken();
     }
 
-    fn recordWarning(p: *Parser, msg: Warning) error{OutOfMemory}!void {
+    fn possibleToken(p: *Parser, tag: Token.Tag) ?TokenIndex {
+        if (p.token_tags[p.token_index] != tag) return null;
+        return p.nextToken();
+    }
+
+    fn recordError(p: *Parser, msg: Tree.Error) error{OutOfMemory}!void {
         switch (msg.tag) {
             .expected_token => if (msg.token != 0 and !p.tokensOnSameLine(msg.token - 1, msg.token)) {
                 var copy = msg;
                 copy.token_is_prev = true;
                 copy.token -= 1;
-                return p.warnings.append(copy);
+                return p.errors.append(copy);
             },
             // else => {},
         }
-        try p.warnings.append(msg);
+        try p.errors.append(msg);
     }
 
     fn tokensOnSameLine(p: *Parser, token1: TokenIndex, token2: TokenIndex) bool {
         return std.mem.indexOfScalar(u8, p.source[p.token_starts[token1]..p.token_starts[token2]], '\n') == null;
     }
 
-    fn fail(p: *Parser, msg: Warning) error{ ParseError, OutOfMemory } {
-        try p.recordWarning(msg);
+    fn fail(p: *Parser, msg: Tree.Error) error{ ParseError, OutOfMemory } {
+        try p.recordError(msg);
         return error.ParseError;
     }
 
@@ -138,26 +174,6 @@ const Parser = struct {
         p.token_index += 1;
         return result;
     }
-};
-
-// Transaction holds details about an individual transaction
-// type Transaction struct {
-// 	Date                    time.Time
-// 	State                   TransactionState
-// 	Payee                   string
-// 	Postings                []*Posting
-// 	postingWithElidedAmount *Posting
-// 	HeaderNote              string   // note in the header
-// 	Notes                   []string // notes under the header
-// }
-
-pub const Transaction = struct {
-    pub const State = enum { pending, cleared };
-
-    date: Date,
-    state: ?State,
-    payee: []const u8,
-    // posting
 };
 
 test "basic" {
