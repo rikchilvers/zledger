@@ -227,8 +227,8 @@ fn testTokenize(source: [:0]const u8, expected_tokens: []const Token.Tag) !void 
 }
 
 test "transactions" {
-    std.testing.log_level = .debug;
-    std.log.info("\n", .{});
+    // std.testing.log_level = .debug;
+    // std.log.info("\n", .{});
 
     try testTokenize(
         \\2020 abc
@@ -242,8 +242,8 @@ test "transactions" {
 }
 
 test "cleared and pending" {
-    std.testing.log_level = .debug;
-    std.log.info("\n", .{});
+    // std.testing.log_level = .debug;
+    // std.log.info("\n", .{});
 
     try testTokenize("2020 ! abc", &.{ .date, .status_pending, .identifier });
     try testTokenize("2020-01 * abc", &.{ .date, .status_cleared, .identifier });
@@ -252,8 +252,8 @@ test "cleared and pending" {
 }
 
 test "comments" {
-    std.testing.log_level = .debug;
-    std.log.info("\n", .{});
+    // std.testing.log_level = .debug;
+    // std.log.info("\n", .{});
 
     try testTokenize("; hi", &.{.comment});
     try testTokenize("2020 abc  ; xyz", &.{ .date, .identifier, .comment });
@@ -261,15 +261,15 @@ test "comments" {
 }
 
 test "dates" {
-    std.testing.log_level = .debug;
-    std.log.info("\n", .{});
+    // std.testing.log_level = .debug;
+    // std.log.info("\n", .{});
 
     try testTokenize("2021-02-03", &.{.date});
 }
 
 test "keywords" {
-    std.testing.log_level = .debug;
-    std.log.info("\n", .{});
+    // std.testing.log_level = .debug;
+    // std.log.info("\n", .{});
 
     try testTokenize("\taccount", &.{ .indentation, .identifier });
     try testTokenize("account a:b:c", &.{ .keyword_account, .identifier });
@@ -279,8 +279,8 @@ test "keywords" {
 }
 
 test "indentations" {
-    std.testing.log_level = .debug;
-    std.log.info("\n", .{});
+    // std.testing.log_level = .debug;
+    // std.log.info("\n", .{});
 
     try testTokenize(" \n    abc def", &.{ .indentation, .identifier });
     try testTokenize(" \n\txyz", &.{ .indentation, .identifier });
