@@ -26,6 +26,14 @@ pub const TokenList = std.MultiArrayList(struct {
 });
 pub const NodeList = std.MultiArrayList(Node);
 
+pub fn deinit(tree: *Tree, gpa: std.mem.Allocator) void {
+    tree.tokens.deinit(gpa);
+    tree.nodes.deinit(gpa);
+    gpa.free(tree.extra_data);
+    gpa.free(tree.errors);
+    tree.* = undefined;
+}
+
 pub const Error = struct {
     tag: Tag,
     /// True if `token` points to the token before the token causing an issue.

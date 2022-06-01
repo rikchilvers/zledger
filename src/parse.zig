@@ -42,6 +42,11 @@ pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!Tree {
     defer parser.nodes.deinit(gpa);
     defer parser.extra_data.deinit();
 
+    // TODO: would it be possible to work out the ratio of tokens to AST nodes for ledger files?
+    // Make sure at least 1 so we can use appendAssumeCapacity on the root node below.
+    const estimated_node_count = (tokens.len + 2) / 2;
+    try parser.nodes.ensureTotalCapacity(gpa, estimated_node_count);
+
     // Root node must be index 0.
     parser.nodes.appendAssumeCapacity(.{
         .tag = .root,
@@ -181,5 +186,6 @@ test "basic" {
     std.log.info("\n", .{});
 
     const source: [:0]const u8 = "2020-01-02 abc";
-    _ = try parse(std.testing.allocator, source);
+    var tree = try parse(std.testing.allocator, source);
+    tree.deinit(std.testing.allocator);
 }
