@@ -21,8 +21,7 @@ pub const Token = struct {
         comment,
         date,
         identifier, // payee, account
-        status_cleared,
-        status_pending,
+        status,
         keyword_account,
         keyword_apply_account,
         keyword_apply_tag,
@@ -116,14 +115,9 @@ pub const Tokenizer = struct {
                         result.loc.start = self.index;
                         seen_spaces = 0;
                     },
-                    '!' => {
+                    '!', '*' => {
                         state = .status;
-                        result.tag = .status_pending;
-                        result.loc.start = self.index;
-                    },
-                    '*' => {
-                        state = .status;
-                        result.tag = .status_cleared;
+                        result.tag = .status;
                         result.loc.start = self.index;
                     },
                     else => {
@@ -238,15 +232,15 @@ test "transactions" {
         \\    x:y:z
         \\    ; comment
         \\    x:y:z
-    , &.{ .date, .identifier, .indentation, .identifier, .indentation, .identifier, .date, .status_pending, .identifier, .indentation, .identifier, .indentation, .comment, .indentation, .identifier });
+    , &.{ .date, .identifier, .indentation, .identifier, .indentation, .identifier, .date, .status, .identifier, .indentation, .identifier, .indentation, .comment, .indentation, .identifier });
 }
 
 test "cleared and pending" {
     // std.testing.log_level = .debug;
     // std.log.info("\n", .{});
 
-    try testTokenize("2020 ! abc", &.{ .date, .status_pending, .identifier });
-    try testTokenize("2020-01 * abc", &.{ .date, .status_cleared, .identifier });
+    try testTokenize("2020 ! abc", &.{ .date, .status, .identifier });
+    try testTokenize("2020-01 * abc", &.{ .date, .status, .identifier });
 
     try testTokenize("2020-01 *abc", &.{ .date, .identifier });
 }
