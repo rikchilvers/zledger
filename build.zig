@@ -1,4 +1,5 @@
 const std = @import("std");
+const deps = @import("./deps.zig");
 
 pub fn build(b: *std.build.Builder) void {
     // Standard target options allows the person running `zig build` to choose
@@ -14,6 +15,7 @@ pub fn build(b: *std.build.Builder) void {
     const exe = b.addExecutable("zledger", "src/main.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
+    deps.addAllTo(exe);
     exe.install();
 
     const run_cmd = exe.run();
@@ -26,6 +28,7 @@ pub fn build(b: *std.build.Builder) void {
     run_step.dependOn(&run_cmd.step);
 
     const exe_tests = b.addTest("src/tests.zig");
+    deps.addAllTo(exe_tests);
     exe_tests.setTarget(target);
     exe_tests.setBuildMode(mode);
 

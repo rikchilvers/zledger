@@ -1,0 +1,5 @@
+name: zledger
+license: None
+description: None
+root_dependencies:
+  - src: git https://github.com/frmdstryr/zig-datetime
