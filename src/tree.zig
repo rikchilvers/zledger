@@ -47,6 +47,7 @@ pub const Error = struct {
     pub const Tag = enum {
         /// `expected_tag` is populated.
         expected_token,
+        expected_transaction,
     };
 };
 
@@ -63,29 +64,43 @@ pub const Node = struct {
     /// Possible Node types
     pub const Tag = enum {
         root,
-        transaction_prototype,
-        postings_prototype,
+        /// main_token: date
+        /// lhs: index to data; 0 if no data
+        /// rhs: index of transaction_body
+        transaction_declaration,
+
+        /// main_token: index of transaction_declaration
+        /// lhs: index to data
+        /// rhs: unused
+        transaction_body,
+
+        /// main_token: account
+        /// lhs: index of transaction_body
+        /// rhs: index to data
+        posting_prototype,
     };
 
     /// Information associated with the Node
     /// lhs and rhs may be used differently for each tag
+    /// either may point to values in the Tree's extra_data array
     pub const Data = struct {
         lhs: Index,
         rhs: Index,
     };
 
+    pub const TransactionDeclaration = struct {
+        status: Index, // 0 if null
+        payee: Index, // 0 if null
+    };
+
     pub const TransactionPrototype = struct {
-        date: Index,
-        status: ?Index,
-        payee: ?Index,
         postings_start: Index,
         postings_end: Index,
     };
 
-    pub const PostingPrototype = struct {
-        account: Index,
-        commodity: ?Index,
-        amount: ?Index,
+    pub const Posting = struct {
+        commodity: Index, // 0 if null
+        amount: Index, // 0 if null
     };
 };
 

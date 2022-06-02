@@ -86,8 +86,17 @@ const Parser = struct {
             std.log.info("parser saw {s}", .{p.token_tags[p.token_index]});
             switch (p.token_tags[p.token_index]) {
                 .date => {
-                    _ = try p.expectTransactionRecoverable();
-                    // TODO: add the node if it's not 0
+                    const xact = try p.expectTransactionRecoverable();
+                    if (xact == 0) {
+                        try p.recordError(.{
+                            .tag = .expected_transaction,
+                            .token = p.token_index,
+                        });
+                        continue;
+                    }
+
+                    // parse the postings
+                    // add start/finish indices to the node
                 },
                 .eof => {
                     break;
@@ -97,6 +106,23 @@ const Parser = struct {
                 },
             }
         }
+    }
+
+    fn addNode(p: *Parser, elem: Tree.NodeList.Elem) Allocator.Error!Node.Index {
+        const result = @intCast(Node.Index, p.nodes.len);
+        try p.nodes.append(p.gpa, elem);
+        return result;
+    }
+
+    fn addExtra(p: *Parser, extra: anytype) Allocator.Error!Node.Index {
+        const fields = std.meta.fields(@TypeOf(extra));
+        try p.extra_data.ensureUnusedCapacity(fields.len);
+        const result = @intCast(u32, p.extra_data.items.len);
+        inline for (fields) |field| {
+            comptime assert(field.field_type == Node.Index);
+            p.extra_data.appendAssumeCapacity(@field(extra, field.name));
+        }
+        return result;
     }
 
     fn expectTransactionRecoverable(p: *Parser) !Node.Index {
@@ -110,11 +136,31 @@ const Parser = struct {
     }
 
     fn expectTransaction(p: *Parser) !Node.Index {
-        _ = try p.expectToken(.date);
-        _ = p.possibleToken(.status);
-        _ = try p.expectToken(.identifier);
+        const date = try p.expectToken(.date);
+        const status = p.eatToken(.status) orelse 0;
+        const payee = p.eatToken(.identifier) orelse 0;
 
-        return null_node;
+        var extra: Node.Index = 0;
+        if (status + payee > 0) {
+            extra = try p.addExtra(Node.TransactionDeclaration{
+                .status = status,
+                .payee = payee,
+            });
+        }
+
+        // TODO: next
+        // probably need to reserve a node for the TransactionBody
+        // and go on to parse the postings
+        // that way, we can add them to the body but maintain the order
+        // maybe also reserve a node for the declaration since that points at the body
+        return try p.addNode(.{
+            .tag = .transaction_declaration,
+            .main_token = date,
+            .data = .{
+                .lhs = extra,
+                .rhs = 0,
+            },
+        });
     }
 
     /// Attempts to find next block by searching for certain tokens
@@ -143,14 +189,9 @@ const Parser = struct {
         return p.nextToken();
     }
 
-    fn possibleToken(p: *Parser, tag: Token.Tag) ?TokenIndex {
-        if (p.token_tags[p.token_index] != tag) return null;
-        return p.nextToken();
-    }
-
     fn recordError(p: *Parser, msg: Tree.Error) error{OutOfMemory}!void {
         switch (msg.tag) {
-            .expected_token => if (msg.token != 0 and !p.tokensOnSameLine(msg.token - 1, msg.token)) {
+            .expected_token, .expected_transaction => if (msg.token != 0 and !p.tokensOnSameLine(msg.token - 1, msg.token)) {
                 var copy = msg;
                 copy.token_is_prev = true;
                 copy.token -= 1;
