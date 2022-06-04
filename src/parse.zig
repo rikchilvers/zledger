@@ -226,6 +226,10 @@ const Parser = struct {
                     p.token_index -= 1;
                     return;
                 },
+                .eof => {
+                    p.token_index -= 1;
+                    return;
+                },
                 else => {},
             }
         }
