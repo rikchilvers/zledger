@@ -114,6 +114,16 @@ const Parser = struct {
         return result;
     }
 
+    fn setNode(p: *Parser, i: usize, elem: Tree.NodeList.Elem) Node.Index {
+        p.nodes.set(i, elem);
+        return @intCast(Node.Index, i);
+    }
+
+    fn reserveNode(p: *Parser) !usize {
+        try p.nodes.resize(p.gpa, p.nodes.len + 1);
+        return p.nodes.len - 1;
+    }
+
     fn addExtra(p: *Parser, extra: anytype) Allocator.Error!Node.Index {
         const fields = std.meta.fields(@TypeOf(extra));
         try p.extra_data.ensureUnusedCapacity(fields.len);
@@ -136,13 +146,14 @@ const Parser = struct {
     }
 
     fn expectTransaction(p: *Parser) !Node.Index {
+        // TODO: eat docs
         const date = try p.expectToken(.date);
         const status = p.eatToken(.status) orelse 0;
         const payee = p.eatToken(.identifier) orelse 0;
 
-        var extra: Node.Index = 0;
+        var decl_extra: Node.Index = 0;
         if (status + payee > 0) {
-            extra = try p.addExtra(Node.TransactionDeclaration{
+            decl_extra = try p.addExtra(Node.TransactionDeclaration{
                 .status = status,
                 .payee = payee,
             });
@@ -152,15 +163,57 @@ const Parser = struct {
         // probably need to reserve a node for the TransactionBody
         // and go on to parse the postings
         // that way, we can add them to the body but maintain the order
-        // maybe also reserve a node for the declaration since that points at the body
-        return try p.addNode(.{
+
+        const decl = try p.addNode(.{
             .tag = .transaction_declaration,
             .main_token = date,
             .data = .{
-                .lhs = extra,
+                .lhs = decl_extra,
                 .rhs = 0,
             },
         });
+
+        const body_index = try p.reserveNode();
+
+        // get the postings
+        // first two are required
+        p.eatComments();
+        var first_posting = try p.expectPosting();
+        p.eatComments();
+        var last_posting = try p.expectPosting();
+        while (true) {
+            p.eatComments();
+            const posting = try p.expectPostingRecoverable();
+            if (posting == 0) break;
+            last_posting = posting;
+        }
+
+        _ = p.setNode(body_index, .{ .tag = .transaction_body, .main_token = decl, .data = .{
+            .lhs = try p.addExtra(Node.TransactionBody{
+                .postings_start = first_posting,
+                .postings_end = last_posting,
+            }),
+            .rhs = 0,
+        } });
+
+        return decl;
+    }
+
+    fn expectPostingRecoverable(p: *Parser) !Node.Index {
+        return p.expectPosting() catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.ParseError => return null_node,
+        };
+    }
+
+    fn expectPosting(p: *Parser) !Node.Index {
+        _ = p;
+        return null_node;
+    }
+
+    // Skips over comments
+    fn eatComments(p: *Parser) void {
+        _ = p;
     }
 
     /// Attempts to find next block by searching for certain tokens

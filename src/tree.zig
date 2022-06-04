@@ -66,7 +66,7 @@ pub const Node = struct {
         root,
         /// main_token: date
         /// lhs: index to data; 0 if no data
-        /// rhs: index of transaction_body
+        /// rhs: unused
         transaction_declaration,
 
         /// main_token: index of transaction_declaration
@@ -93,7 +93,7 @@ pub const Node = struct {
         payee: Index, // 0 if null
     };
 
-    pub const TransactionPrototype = struct {
+    pub const TransactionBody = struct {
         postings_start: Index,
         postings_end: Index,
     };
