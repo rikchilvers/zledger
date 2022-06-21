@@ -72,8 +72,6 @@ pub const Tokenizer = struct {
     };
 
     pub fn next(self: *Tokenizer) Token {
-        std.log.info("next", .{});
-
         if (self.pending_invalid_token) |token| {
             self.pending_invalid_token = null;
             return token;
@@ -90,22 +88,14 @@ pub const Tokenizer = struct {
         var seen_spaces: usize = 0;
         while (true) : (self.index += 1) {
             const c = self.buffer[self.index];
-
-            if (c == '\n' or c == '\r') {
-                std.log.info("while loop on {d}: {d}:'{s}' ({d} spaces) - {s}", .{ self.index, c, "/n", seen_spaces, state });
-            } else {
-                std.log.info("while loop on {d}: {d}:'{c}' ({d} spaces) - {s}", .{ self.index, c, c, seen_spaces, state });
-            }
-
             switch (state) {
                 .start => switch (c) {
                     0 => break,
 
                     '\n', '\r' => {
-                        result.loc.start = self.index + 1;
                         self.last_newline = self.index;
-                        std.log.info("\tstoring last newline at {}", .{self.last_newline});
                         seen_spaces = 0;
+                        result.loc.start = self.index + 1;
                     },
 
                     ' ', '\t' => {
@@ -126,10 +116,8 @@ pub const Tokenizer = struct {
                     },
 
                     '0'...'9' => {
-                        std.log.info("\tstart found a number. last newline on {}", .{self.last_newline});
-                        // this could be the start of a date or an amount
                         // are we at the start of a line?
-                        if (self.index == 0 or self.index > 0 and (self.buffer[self.index - 1] == '\n' or self.buffer[self.index - 1] == 'r')) {
+                        if (self.index == 0 or (self.index > 0 and (self.buffer[self.index - 1] == '\n' or self.buffer[self.index - 1] == 'r'))) {
                             state = .date;
                             result.tag = .date;
                         } else {
@@ -140,15 +128,6 @@ pub const Tokenizer = struct {
                         result.loc.start = self.index;
                     },
 
-                    // FIXME: we also need to catch commodities here (I think)
-                    // i.e. remove the commodity tag and just use identifier
-                    'a'...'z', 'A'...'Z', 0xc0...0xf7 => {
-                        state = .identifier;
-                        result.tag = .identifier;
-                        result.loc.start = self.index;
-                        seen_spaces = 0;
-                    },
-
                     '!', '*' => {
                         state = .status;
                         result.tag = .status;
@@ -156,11 +135,10 @@ pub const Tokenizer = struct {
                     },
 
                     else => {
-                        std.log.info("start found {x}", .{c});
-                        result.tag = .invalid;
-                        result.loc.end = self.index;
-                        self.index += 1;
-                        return result;
+                        state = .identifier;
+                        result.tag = .identifier;
+                        result.loc.start = self.index;
+                        seen_spaces = 0;
                     },
                 },
 
@@ -169,14 +147,9 @@ pub const Tokenizer = struct {
                         seen_spaces += if (c == ' ') 1 else transaction_indentation;
                     },
                     else => {
-                        // std.log.info("whitespace break", .{});
-                        const i = self.last_newline orelse 0;
-                        std.log.info("    {} <= {} + {} + 1", .{ self.index, i, seen_spaces });
                         const from_beginning = self.index <= (self.last_newline orelse 0) + seen_spaces + 1;
                         if (from_beginning) {
-                            // std.log.info("\t\tspaces from line beginning", .{});
                             if (seen_spaces >= transaction_indentation) {
-                                // std.log.info("\t\tindentation", .{});
                                 result.tag = .indentation;
                                 break;
                             }
@@ -280,9 +253,6 @@ pub const Tokenizer = struct {
 };
 
 fn testTokenize(source: [:0]const u8, expected_tokens: []const Token.Tag) !void {
-    std.testing.log_level = .debug;
-    std.log.info("\n", .{});
-
     var tokenizer = Tokenizer.init(source);
     for (expected_tokens) |expected_token_id| {
         const token = tokenizer.next();
@@ -298,10 +268,10 @@ fn testTokenize(source: [:0]const u8, expected_tokens: []const Token.Tag) !void 
     try std.testing.expectEqual(source.len, last_token.loc.start);
 }
 
-test "keywords" {
-    // std.testing.log_level = .debug;
-    // std.log.info("\n", .{});
+// std.testing.log_level = .debug;
+// std.log.info("\n", .{});
 
+test "keywords" {
     try testTokenize("\taccount", &.{ .indentation, .identifier });
     try testTokenize("account a:b:c", &.{ .keyword_account, .identifier });
     try testTokenize("account a:b:c\n", &.{ .keyword_account, .identifier });
@@ -310,35 +280,22 @@ test "keywords" {
 }
 
 test "dates" {
-    // std.testing.log_level = .debug;
-    // std.log.info("\n", .{});
-
     try testTokenize("2021-02-03", &.{.date});
 }
 
 test "identifiers" {
-    // std.testing.log_level = .debug;
-    // std.log.info("\n", .{});
-
     try testTokenize("abc def", &.{.identifier});
     try testTokenize("abc:def", &.{.identifier});
-
     try testTokenize("abc   xyz", &.{ .identifier, .identifier });
 }
 
 test "statuses" {
-    // std.testing.log_level = .debug;
-    // std.log.info("\n", .{});
-
     try testTokenize("2020 ! abc", &.{ .date, .status, .identifier });
     try testTokenize("2020-01 * abc", &.{ .date, .status, .identifier });
     try testTokenize("2020-01 *abc", &.{ .date, .identifier });
 }
 
 test "indentations" {
-    // std.testing.log_level = .debug;
-    // std.log.info("\n", .{});
-
     try testTokenize("  abc", &.{ .indentation, .identifier });
     try testTokenize("\txyz", &.{ .indentation, .identifier });
     try testTokenize(" \n    abc def", &.{ .indentation, .identifier });
@@ -346,9 +303,6 @@ test "indentations" {
 }
 
 test "comments" {
-    // std.testing.log_level = .debug;
-    // std.log.info("\n", .{});
-
     try testTokenize("; hi", &.{.comment});
     try testTokenize("2020 abc  ; xyz", &.{ .date, .identifier, .comment });
     try testTokenize("\t ; xyz", &.{ .indentation, .comment });
@@ -356,17 +310,13 @@ test "comments" {
 
 test "commodities" {
     try testTokenize("abc:def    £10.00", &.{ .identifier, .identifier, .amount });
-    // try testTokenize("abc:def    USD 10.00", &.{ .identifier, .indentation, .identifier, .amount });
-    // try testTokenize("abc:def    10.00€", &.{ .identifier, .indentation, .amount, .identifier });
-    // try testTokenize("abc:def    10.00 EUR", &.{ .identifier, .indentation, .amount, .identifier });
-
-    std.log.info("\n", .{});
+    try testTokenize("abc:def    USD 10.00", &.{ .identifier, .identifier, .amount });
+    try testTokenize("abc:def    10.00€", &.{ .identifier, .amount, .identifier });
+    try testTokenize("abc:def    10.00 EUR", &.{ .identifier, .amount, .identifier });
 }
 
 test "amounts" {
     try testTokenize("\tabc:def    10", &.{ .indentation, .identifier, .amount });
-
-    std.log.info("\n", .{});
 }
 
 test "transactions" {
@@ -375,4 +325,10 @@ test "transactions" {
         \\    d:e
         \\    x:y
     , &.{ .date, .identifier, .indentation, .identifier, .indentation, .identifier });
+
+    try testTokenize(
+        \\2020 abc
+        \\    d:e  $10
+        \\    x:y  
+    , &.{ .date, .identifier, .indentation, .identifier, .identifier, .amount, .indentation, .identifier });
 }
