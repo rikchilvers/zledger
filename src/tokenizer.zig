@@ -183,7 +183,11 @@ pub const Tokenizer = struct {
 
                 .date => switch (c) {
                     '/', '-', '.', '0'...'9' => {},
-                    else => break,
+                    ' ', '\t', '\n', '\r', 0 => break,
+                    else => {
+                        result.tag = .invalid;
+                        break;
+                    },
                 },
 
                 .identifier => switch (c) {
@@ -247,6 +251,23 @@ pub const Tokenizer = struct {
             result.loc.start = self.index;
         }
 
+        // invalid tags run until the next double space or newline
+        if (result.tag == .invalid) {
+            while (true) : (self.index += 1) {
+                const c = self.buffer[self.index];
+                seen_spaces = 0;
+                switch (c) {
+                    '\n', '\r', 0 => break,
+                    '\t' => seen_spaces += transaction_indentation,
+                    ' ' => seen_spaces += 1,
+                    else => {},
+                }
+                if (seen_spaces >= 2) {
+                    break;
+                }
+            }
+        }
+
         result.loc.end = self.index;
         return result;
     }
@@ -281,6 +302,7 @@ test "keywords" {
 
 test "dates" {
     try testTokenize("2021-02-03", &.{.date});
+    try testTokenize("2021a02-03", &.{.invalid});
 }
 
 test "identifiers" {
