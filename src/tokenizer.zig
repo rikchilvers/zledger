@@ -9,6 +9,7 @@ pub const Token = struct {
 
     pub const keywords = std.ComptimeStringMap(Tag, .{
         .{ "account", .keyword_account },
+        .{ "apply", .keyword_partial },
         .{ "apply account", .keyword_apply_account },
         .{ "apply tag", .keyword_apply_tag },
     });
@@ -26,6 +27,7 @@ pub const Token = struct {
         commodity,
         amount,
         keyword_account,
+        keyword_partial,
         keyword_apply_account,
         keyword_apply_tag,
         invalid,
@@ -191,16 +193,21 @@ pub const Tokenizer = struct {
                 },
 
                 .identifier => switch (c) {
-                    0, '0'...'9', '\n', '\r' => {
-                        break;
-                    },
+                    0, '0'...'9', '\n', '\r' => break,
                     ' ', '\t' => {
                         // this could be a keyword if it begins at the start of the line
-                        if (result.loc.start == 0) {
+                        const from_beginning = blk: {
+                            if (result.loc.start == 0) break :blk true;
+                            break :blk self.buffer[result.loc.start - 1] == '\n' or self.buffer[result.loc.start - 1] == '\r';
+                        };
+                        if (from_beginning) {
                             if (Token.getKeyword(self.buffer[result.loc.start..self.index])) |tag| {
+                                if (tag == .keyword_partial) continue;
                                 result.tag = tag;
-                                break;
+                            } else {
+                                result.tag = .invalid;
                             }
+                            break;
                         }
 
                         seen_spaces += if (c == ' ') 1 else transaction_indentation;
@@ -217,20 +224,7 @@ pub const Tokenizer = struct {
                             break;
                         }
                     },
-                    // TODO: convert chars to unicode values and use a range so we can include more
-                    // 'a'...'z', 'A'...'Z', '0'...'9', ':' => {
-                    //     seen_spaces = 0;
-                    // },
-                    else => {
-                        seen_spaces = 0;
-                        // this could be a keyword if it begins at the start of the line
-                        if (result.loc.start == 0) {
-                            if (Token.getKeyword(self.buffer[result.loc.start..self.index])) |tag| {
-                                result.tag = tag;
-                            }
-                        }
-                        // break;
-                    },
+                    else => seen_spaces = 0,
                 },
 
                 else => {
@@ -293,9 +287,7 @@ fn testTokenize(source: [:0]const u8, expected_tokens: []const Token.Tag) !void 
 // std.log.info("\n", .{});
 
 test "keywords" {
-    try testTokenize("\taccount", &.{ .indentation, .identifier });
-    try testTokenize("account a:b:c", &.{ .keyword_account, .identifier });
-    try testTokenize("account a:b:c\n", &.{ .keyword_account, .identifier });
+    try testTokenize(" \naccount a:b:c", &.{ .keyword_account, .identifier });
     try testTokenize("apply tag abc\n", &.{ .keyword_apply_tag, .identifier });
     try testTokenize("apply account abc\n", &.{ .keyword_apply_account, .identifier });
 }
@@ -305,19 +297,13 @@ test "dates" {
     try testTokenize("2021a02-03", &.{.invalid});
 }
 
-test "identifiers" {
-    try testTokenize("abc def", &.{.identifier});
-    try testTokenize("abc:def", &.{.identifier});
-    try testTokenize("abc   xyz", &.{ .identifier, .identifier });
-}
-
 test "statuses" {
     try testTokenize("2020 ! abc", &.{ .date, .status, .identifier });
     try testTokenize("2020-01 * abc", &.{ .date, .status, .identifier });
     try testTokenize("2020-01 *abc", &.{ .date, .identifier });
 }
 
-test "indentations" {
+test "indentations and identifiers" {
     try testTokenize("  abc", &.{ .indentation, .identifier });
     try testTokenize("\txyz", &.{ .indentation, .identifier });
     try testTokenize(" \n    abc def", &.{ .indentation, .identifier });
@@ -331,10 +317,10 @@ test "comments" {
 }
 
 test "commodities" {
-    try testTokenize("abc:def    £10.00", &.{ .identifier, .identifier, .amount });
-    try testTokenize("abc:def    USD 10.00", &.{ .identifier, .identifier, .amount });
-    try testTokenize("abc:def    10.00€", &.{ .identifier, .amount, .identifier });
-    try testTokenize("abc:def    10.00 EUR", &.{ .identifier, .amount, .identifier });
+    try testTokenize("\tabc:def    £10.00", &.{ .indentation, .identifier, .identifier, .amount });
+    try testTokenize("\tabc:def    USD 10.00", &.{ .indentation, .identifier, .identifier, .amount });
+    try testTokenize("\tabc:def    10.00€", &.{ .indentation, .identifier, .amount, .identifier });
+    try testTokenize("\tabc:def    10.00 EUR", &.{ .indentation, .identifier, .amount, .identifier });
 }
 
 test "amounts" {
