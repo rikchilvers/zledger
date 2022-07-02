@@ -58,6 +58,11 @@ pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!Tree {
 
     try parser.start();
 
+    std.log.info("node tags:\n", .{});
+    for (parser.nodes.items(.tag)) |tag| {
+        std.log.info("{}", .{tag});
+    }
+
     return Tree{
         .source = source,
         .tokens = tokens.toOwnedSlice(),
@@ -150,69 +155,92 @@ const Parser = struct {
     }
 
     fn expectTransaction(p: *Parser) !Node.Index {
+        const date_token = p.token_index;
+
+        // We want these three to be next to each other
+        const declaration_index = try p.reserveNode();
+        const header_index = try p.reserveNode();
+        const body_index = try p.reserveNode();
+
+        const header = try p.parseTransactionHeader(header_index);
+        const body = try p.parseTransactionBody(body_index, header);
+
+        return p.setNode(declaration_index, .{ .tag = .transaction_declaration, .main_token = date_token, .data = .{
+            .lhs = header,
+            .rhs = body,
+        } });
+    }
+
+    fn parseTransactionHeader(p: *Parser, index: usize) !Node.Index {
         // TODO: eat docs
+
         const date = try p.expectToken(.date);
         const status = p.eatToken(.status) orelse 0;
         const payee = p.eatToken(.identifier) orelse 0;
 
-        var decl_extra: Node.Index = 0;
+        var header_extra: Node.Index = 0;
         if (status + payee > 0) {
-            decl_extra = try p.addExtra(Node.TransactionDeclaration{
+            header_extra = try p.addExtra(Node.TransactionHeader{
                 .status = status,
                 .payee = payee,
+                .comment = 0, // FIXME: parse
             });
         }
 
-        // TODO: next
-        // probably need to reserve a node for the TransactionBody
-        // and go on to parse the postings
-        // that way, we can add them to the body but maintain the order
-
-        const decl = try p.addNode(.{
-            .tag = .transaction_declaration,
+        return p.setNode(index, .{
+            .tag = .transaction_header,
             .main_token = date,
             .data = .{
-                .lhs = decl_extra,
+                .lhs = header_extra,
                 .rhs = 0,
             },
         });
+    }
 
-        const body_index = try p.reserveNode();
-
-        // get the postings
-        // first two are required
-        p.eatComments();
-        var first_posting = try p.expectPosting();
-        p.eatComments();
-        var last_posting = try p.expectPosting();
+    fn parseTransactionBody(p: *Parser, index: usize, header_index: Node.Index) !Node.Index {
+        var first_posting = try p.expectPosting(header_index);
+        var last_posting = try p.expectPosting(header_index);
         while (true) {
-            p.eatComments();
-            const posting = try p.expectPostingRecoverable();
+            const posting = try p.expectPostingRecoverable(header_index);
             if (posting == 0) break;
             last_posting = posting;
         }
 
-        _ = p.setNode(body_index, .{ .tag = .transaction_body, .main_token = decl, .data = .{
-            .lhs = try p.addExtra(Node.TransactionBody{
-                .postings_start = first_posting,
-                .postings_end = last_posting,
-            }),
-            .rhs = 0,
+        return p.setNode(index, .{ .tag = .transaction_body, .main_token = 0, .data = .{
+            .lhs = first_posting,
+            .rhs = last_posting,
         } });
-
-        return decl;
     }
 
-    fn expectPostingRecoverable(p: *Parser) !Node.Index {
-        return p.expectPosting() catch |err| switch (err) {
+    fn expectPostingRecoverable(p: *Parser, body_index: Node.Index) !Node.Index {
+        return p.expectPosting(body_index) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.ParseError => return null_node,
         };
     }
 
-    fn expectPosting(p: *Parser) !Node.Index {
-        _ = p;
-        return null_node;
+    fn expectPosting(p: *Parser, header_index: Node.Index) !Node.Index {
+        // p.eatComments();
+        _ = try p.expectToken(.indentation);
+        const account = try p.expectToken(.identifier);
+        var commodity = p.eatToken(.identifier);
+        const amount = p.eatToken(.amount);
+        if (commodity == null and amount != null) {
+            commodity = p.eatToken(.identifier);
+        }
+
+        return try p.addNode(.{
+            .tag = .posting,
+            .main_token = account,
+            .data = .{
+                .lhs = header_index,
+                .rhs = try p.addExtra(Node.Posting{
+                    .commodity = commodity orelse 0,
+                    .amount = amount orelse 0,
+                    .comment = 0, // FIXME: parse
+                }),
+            },
+        });
     }
 
     // Skips over comments
@@ -272,10 +300,13 @@ const Parser = struct {
         return error.ParseError;
     }
 
+    /// Returns the index of an expected type of token or null.
+    /// Moves parser to the next token.
     fn eatToken(p: *Parser, tag: Token.Tag) ?TokenIndex {
         return if (p.token_tags[p.token_index] == tag) p.nextToken() else null;
     }
 
+    /// Moves the Parser to the next token but returns the index of the current one.
     fn nextToken(p: *Parser) TokenIndex {
         const result = p.token_index;
         p.token_index += 1;
@@ -283,11 +314,26 @@ const Parser = struct {
     }
 };
 
-test "basic" {
+test "transaction decl and body" {
     std.testing.log_level = .debug;
     std.log.info("\n", .{});
 
-    const source: [:0]const u8 = "2020-01-02 abc";
+    const source: [:0]const u8 = "2020-01-02 abc\n\ta:b   $1\n\tc:d";
     var tree = try parse(std.testing.allocator, source);
-    tree.deinit(std.testing.allocator);
+    defer tree.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualSlices(Node.Tag, &.{ .root, .transaction_declaration, .transaction_header, .transaction_body, .posting, .posting }, tree.nodes.items(.tag));
+
+    // std.log.info("{}", .{tree.nodes.fields});
 }
+
+// test "postings" {
+//     std.testing.log_level = .debug;
+//     std.log.info("\n", .{});
+
+//     const source: [:0]const u8 = "2020-01-02 abc\n\taccount:sub\t£123\n\taccount2\t";
+//     var tree = try parse(std.testing.allocator, source);
+//     defer tree.deinit(std.testing.allocator);
+
+//     std.log.info("{s}", .{tree.nodes.items(.tag)});
+// }

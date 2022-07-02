@@ -64,20 +64,32 @@ pub const Node = struct {
     /// Possible Node types
     pub const Tag = enum {
         root,
+
+        // Atoms
+        identifier,
+        commodity,
+
+        // Molecules
+
         /// main_token: date
-        /// lhs: index to data; 0 if no data
-        /// rhs: unused
+        /// lhs: header
+        /// rhs: body
         transaction_declaration,
 
-        /// main_token: index of transaction_declaration
-        /// lhs: index to data
+        /// main_token: date
+        /// lhs: extra_data
         /// rhs: unused
-        transaction_body,
+        transaction_header,
+
+        /// main_token: unused
+        /// lhs: index of first posting
+        /// rhs: index of final posting
+        transaction_body, // TODO: change to span
 
         /// main_token: account
-        /// lhs: index of transaction_body
+        /// lhs: index of transaction_header
         /// rhs: index to data
-        posting_prototype,
+        posting,
     };
 
     /// Information associated with the Node
@@ -88,19 +100,16 @@ pub const Node = struct {
         rhs: Index,
     };
 
-    pub const TransactionDeclaration = struct {
-        status: Index, // 0 if null
-        payee: Index, // 0 if null
-    };
-
-    pub const TransactionBody = struct {
-        postings_start: Index,
-        postings_end: Index,
+    pub const TransactionHeader = struct {
+        status: Index,
+        payee: Index,
+        comment: Index, // 0 if null
     };
 
     pub const Posting = struct {
         commodity: Index, // 0 if null
         amount: Index, // 0 if null
+        comment: Index, // 0 if null
     };
 };
 
