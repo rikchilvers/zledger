@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const Error = error{UnexpectedCharacter};
+
 const Self = @This();
 
 /// 0 for positive, 1 for negative
@@ -11,8 +13,9 @@ digits: u32,
 /// Array of digits. Most significant first.
 source: [:0]const u8,
 
-pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8) *Self {
+pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8) !*Self {
     var decimal = allocator.create(Self) catch unreachable;
+    errdefer allocator.destroy(decimal);
 
     decimal.sign = 0;
     decimal.fractional = 0;
@@ -56,9 +59,7 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8) *Self 
             '.' => {
                 decimal.fractional = decimal.digits + 1;
             },
-            else => {
-                std.log.info("found {d}", .{c});
-            },
+            else => return Error.UnexpectedCharacter,
         }
     }
 
@@ -70,7 +71,7 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8) *Self 
 }
 
 /// Initialises the
-pub fn init(allocator: std.mem.Allocator, number: [:0]const u8) *Self {
+pub fn init(allocator: std.mem.Allocator, number: [:0]const u8) !*Self {
     var source = allocator.allocSentinel(u8, std.mem.len(number), 0) catch unreachable;
     std.mem.copy(u8, source, number);
     return initWithSource(allocator, source);
@@ -82,9 +83,8 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 
 test "init allocates for source" {
     std.testing.log_level = .debug;
-    std.log.info("\n", .{});
 
-    const d = Self.init(std.testing.allocator, "3.14159");
+    const d = try Self.init(std.testing.allocator, "3.14159");
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
     try std.testing.expectEqual(@as(u32, 5), d.fractional);
@@ -93,12 +93,32 @@ test "init allocates for source" {
     d.deinit(std.testing.allocator);
 }
 
+test "parses integers" {
+    std.testing.log_level = .debug;
+
+    const s: [:0]const u8 = "314159";
+    const d = try Self.initWithSource(std.testing.allocator, s);
+
+    try std.testing.expectEqual(@as(u32, 6), d.digits);
+    try std.testing.expectEqual(@as(u32, 0), d.fractional);
+
+    d.deinit(std.testing.allocator);
+}
+
+test "parsing returns error on unexpected character" {
+    std.testing.log_level = .debug;
+
+    const s: [:0]const u8 = "314159a";
+    const d = Self.initWithSource(std.testing.allocator, s);
+
+    try std.testing.expectError(Error.UnexpectedCharacter, d);
+}
+
 test "parses decimals" {
     std.testing.log_level = .debug;
-    std.log.info("\n", .{});
 
     const s: [:0]const u8 = "3.14159";
-    const d = Self.initWithSource(std.testing.allocator, s);
+    const d = try Self.initWithSource(std.testing.allocator, s);
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
     try std.testing.expectEqual(@as(u32, 5), d.fractional);
