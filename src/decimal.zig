@@ -13,7 +13,7 @@ digits: u32,
 /// Array of digits. Most significant first.
 source: [:0]const u8,
 
-pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8) !*Self {
+pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, separator: ?*u8) !*Self {
     var decimal = allocator.create(Self) catch unreachable;
     errdefer allocator.destroy(decimal);
 
@@ -22,7 +22,8 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8) !*Self
     decimal.digits = 0;
     decimal.source = source;
 
-    // TODO: parse the source
+    var sep: u8 = 0;
+    _ = sep;
 
     // used to track index into the source
     var i: usize = 0;
@@ -53,6 +54,11 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8) !*Self
                 decimal.digits += 1;
             },
             ',' => {
+                // treat the first , as a decimal point
+                if (decimal.fractional == 0) {
+                    decimal.fractional = decimal.digits + 1;
+                } else {}
+
                 // TODO: handle incorrect thousand separators
                 // TODO: handle commas as decimal deliniators
             },
@@ -67,14 +73,17 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8) !*Self
         decimal.fractional = decimal.digits - (decimal.fractional - 1);
     }
 
+    if (separator) |s| {
+        s.* = sep;
+    }
     return decimal;
 }
 
 /// Initialises the
-pub fn init(allocator: std.mem.Allocator, number: [:0]const u8) !*Self {
+pub fn init(allocator: std.mem.Allocator, number: [:0]const u8, separator: ?*u8) !*Self {
     var source = allocator.allocSentinel(u8, std.mem.len(number), 0) catch unreachable;
     std.mem.copy(u8, source, number);
-    return initWithSource(allocator, source);
+    return initWithSource(allocator, source, separator);
 }
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
@@ -84,7 +93,7 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 test "init allocates for source" {
     std.testing.log_level = .debug;
 
-    const d = try Self.init(std.testing.allocator, "3.14159");
+    const d = try Self.init(std.testing.allocator, "3.14159", null);
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
     try std.testing.expectEqual(@as(u32, 5), d.fractional);
@@ -97,7 +106,7 @@ test "parses integers" {
     std.testing.log_level = .debug;
 
     const s: [:0]const u8 = "314159";
-    const d = try Self.initWithSource(std.testing.allocator, s);
+    const d = try Self.initWithSource(std.testing.allocator, s, null);
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
     try std.testing.expectEqual(@as(u32, 0), d.fractional);
@@ -109,16 +118,16 @@ test "parsing returns error on unexpected character" {
     std.testing.log_level = .debug;
 
     const s: [:0]const u8 = "314159a";
-    const d = Self.initWithSource(std.testing.allocator, s);
+    const d = Self.initWithSource(std.testing.allocator, s, null);
 
     try std.testing.expectError(Error.UnexpectedCharacter, d);
 }
 
-test "parses decimals" {
+test "parses decimals with . as decimal separator" {
     std.testing.log_level = .debug;
 
     const s: [:0]const u8 = "3.14159";
-    const d = try Self.initWithSource(std.testing.allocator, s);
+    const d = try Self.initWithSource(std.testing.allocator, s, null);
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
     try std.testing.expectEqual(@as(u32, 5), d.fractional);
@@ -126,15 +135,27 @@ test "parses decimals" {
     d.deinit(std.testing.allocator);
 }
 
-test "parses integers" {
+test "parses decimals with , as decimal separator" {
     std.testing.log_level = .debug;
-    std.log.info("\n", .{});
 
-    const s: [:0]const u8 = "314159";
-    const d = Self.initWithSource(std.testing.allocator, s);
+    const s: [:0]const u8 = "3,14159";
+    const d = try Self.initWithSource(std.testing.allocator, s, null);
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
-    try std.testing.expectEqual(@as(u32, 0), d.fractional);
+    try std.testing.expectEqual(@as(u32, 5), d.fractional);
 
     d.deinit(std.testing.allocator);
 }
+
+// test "parses decimals with thousand separators" {
+//     std.testing.log_level = .debug;
+
+//     const s: [:0]const u8 = "3,141,592.65";
+//     // var sep: [:0]const u8 = ' ';
+//     const d = try Self.initWithSource(std.testing.allocator, s);
+
+//     try std.testing.expectEqual(@as(u32, 7), d.digits);
+//     try std.testing.expectEqual(@as(u32, 2), d.fractional);
+
+//     d.deinit(std.testing.allocator);
+// }
