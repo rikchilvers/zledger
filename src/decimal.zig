@@ -56,7 +56,9 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8) *Self 
             '.' => {
                 decimal.fractional = decimal.digits + 1;
             },
-            else => unreachable,
+            else => {
+                std.log.info("found {d}", .{c});
+            },
         }
     }
 
@@ -68,23 +70,51 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8) *Self 
 }
 
 /// Initialises the
-pub fn init(allocator: std.mem.Allocator, number: []const u8) *Self {
-    _ = allocator;
-    _ = number;
-    unreachable;
+pub fn init(allocator: std.mem.Allocator, number: [:0]const u8) *Self {
+    var source = allocator.allocSentinel(u8, std.mem.len(number), 0) catch unreachable;
+    std.mem.copy(u8, source, number);
+    return initWithSource(allocator, source);
 }
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-    _ = self;
-    _ = allocator;
-    unreachable;
+    allocator.destroy(self);
 }
 
-test "init with source" {
-    const s: [:0]const u8 = "3.14159";
-    const d = Self.initWithSource(std.testing.allocator, s);
-    // defer d.deinit(std.testing.allocator);
+test "init allocates for source" {
+    std.testing.log_level = .debug;
+    std.log.info("\n", .{});
+
+    const d = Self.init(std.testing.allocator, "3.14159");
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
     try std.testing.expectEqual(@as(u32, 5), d.fractional);
+
+    std.testing.allocator.free(d.source);
+    d.deinit(std.testing.allocator);
+}
+
+test "parses decimals" {
+    std.testing.log_level = .debug;
+    std.log.info("\n", .{});
+
+    const s: [:0]const u8 = "3.14159";
+    const d = Self.initWithSource(std.testing.allocator, s);
+
+    try std.testing.expectEqual(@as(u32, 6), d.digits);
+    try std.testing.expectEqual(@as(u32, 5), d.fractional);
+
+    d.deinit(std.testing.allocator);
+}
+
+test "parses integers" {
+    std.testing.log_level = .debug;
+    std.log.info("\n", .{});
+
+    const s: [:0]const u8 = "314159";
+    const d = Self.initWithSource(std.testing.allocator, s);
+
+    try std.testing.expectEqual(@as(u32, 6), d.digits);
+    try std.testing.expectEqual(@as(u32, 0), d.fractional);
+
+    d.deinit(std.testing.allocator);
 }
