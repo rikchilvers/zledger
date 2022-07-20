@@ -37,7 +37,6 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, render
     var j: usize = 0;
 
     // Skip over spaces at the start of the source
-    // TODO: test for this
     while (true) : (i += 1) {
         if (source[i] != ' ') break;
     }
@@ -141,6 +140,17 @@ test "init allocates for source" {
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
     try std.testing.expectEqual(@as(u32, 5), d.fractional);
+}
+
+test "ignores space at the start" {
+    // std.testing.log_level = .debug;
+
+    const s: [:0]const u8 = "   314159";
+    const d = try Self.initWithSource(std.testing.allocator, s, null);
+    defer d.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 6), d.digits);
+    try std.testing.expectEqual(@as(u32, 0), d.fractional);
 }
 
 test "parses integers" {
