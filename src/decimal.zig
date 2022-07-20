@@ -13,7 +13,13 @@ digits: u32,
 /// Array of digits. Most significant first.
 source: [:0]const u8,
 
-pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, separator: ?*u8) !*Self {
+pub const RenderingInformation = struct {
+    groupSeparator: u8 = 0, // e.g. 24,000
+    decimalSeparator: u8 = 0, // e.g. 3.141
+    indianNumbering: bool = false, // e.g. 10,00,000
+};
+
+pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, renderingInformation: ?*RenderingInformation) !*Self {
     var decimal = allocator.create(Self) catch unreachable;
     errdefer allocator.destroy(decimal);
 
@@ -22,8 +28,9 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, separa
     decimal.digits = 0;
     decimal.source = source;
 
-    var sep: u8 = 0;
-    _ = sep;
+    var groupSeparator: u8 = 0;
+    var decimalSeparator: u8 = 0;
+    var indianNumbering = false;
 
     // used to track index into the source
     var i: usize = 0;
@@ -53,10 +60,11 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, separa
             '0'...'9' => {
                 decimal.digits += 1;
             },
-            ',' => {
-                // treat the first , as a decimal point
-                if (decimal.fractional == 0) {
+            ',', '_' => {
+                // treat the first , or _ as the separator
+                if (decimalSeparator == 0) {
                     decimal.fractional = decimal.digits + 1;
+                    decimalSeparator = c;
                 } else {}
 
                 // TODO: handle incorrect thousand separators
@@ -65,7 +73,10 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, separa
             '.' => {
                 decimal.fractional = decimal.digits + 1;
             },
-            else => return Error.UnexpectedCharacter,
+            else => {
+                // std.log.info("got a {}", .{c});
+                return Error.UnexpectedCharacter;
+            },
         }
     }
 
@@ -73,14 +84,16 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, separa
         decimal.fractional = decimal.digits - (decimal.fractional - 1);
     }
 
-    if (separator) |s| {
-        s.* = sep;
+    if (renderingInformation) |ri| {
+        ri.*.groupSeparator = groupSeparator;
+        ri.*.decimalSeparator = decimalSeparator;
+        ri.*.indianNumbering = indianNumbering;
     }
     return decimal;
 }
 
 /// Initialises the
-pub fn init(allocator: std.mem.Allocator, number: [:0]const u8, separator: ?*u8) !*Self {
+pub fn init(allocator: std.mem.Allocator, number: [:0]const u8, separator: ?*RenderingInformation) !*Self {
     var source = allocator.allocSentinel(u8, std.mem.len(number), 0) catch unreachable;
     std.mem.copy(u8, source, number);
     return initWithSource(allocator, source, separator);
@@ -140,22 +153,56 @@ test "parses decimals with , as decimal separator" {
 
     const s: [:0]const u8 = "3,14159";
     const d = try Self.initWithSource(std.testing.allocator, s, null);
+    defer d.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
     try std.testing.expectEqual(@as(u32, 5), d.fractional);
-
-    d.deinit(std.testing.allocator);
 }
 
-// test "parses decimals with thousand separators" {
-//     std.testing.log_level = .debug;
+test "parses decimals with thousand separators" {
+    std.testing.log_level = .debug;
 
-//     const s: [:0]const u8 = "3,141,592.65";
-//     // var sep: [:0]const u8 = ' ';
-//     const d = try Self.initWithSource(std.testing.allocator, s);
+    const s: [:0]const u8 = "3,141,592.65";
+    var ri = RenderingInformation{};
+    const d = try Self.initWithSource(std.testing.allocator, s, &ri);
+    defer d.deinit(std.testing.allocator);
 
-//     try std.testing.expectEqual(@as(u32, 7), d.digits);
-//     try std.testing.expectEqual(@as(u32, 2), d.fractional);
+    try std.testing.expectEqual(@as(u32, 9), d.digits);
+    try std.testing.expectEqual(@as(u32, 2), d.fractional);
 
-//     d.deinit(std.testing.allocator);
-// }
+    try std.testing.expectEqual(@as(u8, ','), ri.groupSeparator);
+    try std.testing.expectEqual(@as(u8, '.'), ri.decimalSeparator);
+    try std.testing.expectEqual(false, ri.indianNumbering);
+}
+
+test "parses decimals with thousand separators after decimal point" {
+    std.testing.log_level = .debug;
+
+    const s: [:0]const u8 = "3_141_592.650_123_430";
+    var ri = RenderingInformation{};
+    const d = try Self.initWithSource(std.testing.allocator, s, null);
+    defer d.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 16), d.digits);
+    try std.testing.expectEqual(@as(u32, 9), d.fractional);
+
+    try std.testing.expectEqual(@as(u8, '_'), ri.groupSeparator);
+    try std.testing.expectEqual(@as(u8, '.'), ri.decimalSeparator);
+    try std.testing.expectEqual(false, ri.indianNumbering);
+}
+
+test "parse indian notation" {
+    std.testing.log_level = .debug;
+
+    const s: [:0]const u8 = "3,14,15,926.501";
+    var ri = RenderingInformation{};
+    const d = try Self.initWithSource(std.testing.allocator, s, null);
+    defer d.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 11), d.digits);
+    try std.testing.expectEqual(@as(u32, 3), d.fractional);
+
+    try std.testing.expectEqual(@as(u8, ','), ri.groupSeparator);
+    try std.testing.expectEqual(@as(u8, '.'), ri.decimalSeparator);
+    try std.testing.expectEqual(true, ri.indianNumbering);
+}
