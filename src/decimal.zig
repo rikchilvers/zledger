@@ -4,8 +4,7 @@ const Error = error{UnexpectedCharacter};
 
 const Self = @This();
 
-/// 0 for positive, 1 for negative
-sign: u2,
+positive: bool,
 /// Number of digits to the right of the decimal point
 fractional: u32,
 /// Total number of digits
@@ -23,7 +22,7 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, render
     var decimal = allocator.create(Self) catch unreachable;
     errdefer allocator.destroy(decimal);
 
-    decimal.sign = 0;
+    decimal.positive = true;
     decimal.fractional = 0;
     decimal.digits = 0;
     decimal.source = source;
@@ -44,9 +43,8 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, render
     }
 
     // Find the sign
-    // TODO: test for this
     if (source[i] == '-') {
-        decimal.sign = 1;
+        decimal.positive = false;
         i += 1;
     } else if (source[i] == '+') {
         i += 1;
@@ -154,6 +152,30 @@ test "parses integers" {
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
     try std.testing.expectEqual(@as(u32, 0), d.fractional);
+}
+
+test "parses positive integers" {
+    // std.testing.log_level = .debug;
+
+    const s: [:0]const u8 = "+314159";
+    const d = try Self.initWithSource(std.testing.allocator, s, null);
+    defer d.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 6), d.digits);
+    try std.testing.expectEqual(@as(u32, 0), d.fractional);
+    try std.testing.expect(d.positive);
+}
+
+test "parses negative integers" {
+    // std.testing.log_level = .debug;
+
+    const s: [:0]const u8 = "-314159";
+    const d = try Self.initWithSource(std.testing.allocator, s, null);
+    defer d.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 6), d.digits);
+    try std.testing.expectEqual(@as(u32, 0), d.fractional);
+    try std.testing.expect(!d.positive);
 }
 
 test "parsing returns error on unexpected character" {
