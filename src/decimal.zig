@@ -34,6 +34,8 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, render
 
     // used to track index into the source
     var i: usize = 0;
+    // used to track position of , in the source
+    var j: usize = 0;
 
     // Skip over spaces at the start of the source
     // TODO: test for this
@@ -76,7 +78,11 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, render
                     else => {},
                 }
 
-                // TODO: handle incorrect thousand separators
+                if (i - j == 3) {
+                    // speculative at this point
+                    indianNumbering = true;
+                }
+                j = i;
             },
             '_' => {
                 groupSeparator = '_';
@@ -88,6 +94,12 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, render
                 decimalSeparator = '.';
 
                 decimal.fractional = decimal.digits + 1;
+
+                // If we've detected the number might be formated to match indian numbering,
+                // the previous , should be 3 digits prior to the decimal point
+                if (indianNumbering) {
+                    indianNumbering = i - j == 4;
+                }
             },
             else => {
                 std.log.info("got a {}", .{c});
@@ -207,12 +219,28 @@ test "parses decimals with thousand separators after decimal point" {
     try std.testing.expectEqual(false, ri.indianNumbering);
 }
 
-test "parse indian notation" {
+test "parses indian notation" {
     std.testing.log_level = .debug;
 
-    const s: [:0]const u8 = "3,14,15,926.501";
+    const s: [:0]const u8 = "3,14,15,926.501123";
     var ri = RenderingInformation{};
-    const d = try Self.initWithSource(std.testing.allocator, s, null);
+    const d = try Self.initWithSource(std.testing.allocator, s, &ri);
+    defer d.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 14), d.digits);
+    try std.testing.expectEqual(@as(u32, 6), d.fractional);
+
+    try std.testing.expectEqual(@as(u8, ','), ri.groupSeparator);
+    try std.testing.expectEqual(@as(u8, '.'), ri.decimalSeparator);
+    try std.testing.expectEqual(true, ri.indianNumbering);
+}
+
+test "parses random notation" {
+    std.testing.log_level = .debug;
+
+    const s: [:0]const u8 = "3,14,15,92,6.501";
+    var ri = RenderingInformation{};
+    const d = try Self.initWithSource(std.testing.allocator, s, &ri);
     defer d.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 11), d.digits);
@@ -220,5 +248,5 @@ test "parse indian notation" {
 
     try std.testing.expectEqual(@as(u8, ','), ri.groupSeparator);
     try std.testing.expectEqual(@as(u8, '.'), ri.decimalSeparator);
-    try std.testing.expectEqual(true, ri.indianNumbering);
+    try std.testing.expectEqual(false, ri.indianNumbering);
 }
