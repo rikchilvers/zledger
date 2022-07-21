@@ -111,9 +111,11 @@ pub fn initAndFormat(allocator: std.mem.Allocator, source: [:0]u8, renderingInfo
                     groupSeparator = ',';
                     // Because we previously treated a comma as the decimal separator,
                     // all the fraction digits should now be moved to the integer digits
-                    std.mem.copy(u8, tempInteger[iI + 1 ..], tempFractional[0..iF]);
-                    std.mem.set(u8, tempFractional[0..iF], 0);
-                    iI = iI + 1 + iF;
+                    if (iF > 0) {
+                        std.mem.copy(u8, tempInteger[iI .. iI + iF], tempFractional[0..iF]);
+                        std.mem.set(u8, tempFractional[0..iF], 0);
+                    }
+                    iI += iF;
                     iF = 0;
                 }
                 decimalSeparator = '.';
@@ -144,15 +146,18 @@ pub fn initAndFormat(allocator: std.mem.Allocator, source: [:0]u8, renderingInfo
         ri.*.indianNumbering = indianNumbering;
     }
 
-    std.log.info(">> {s}.{s}", .{ tempInteger, tempFractional });
-
     // Replace the source with the formatted version.
-    std.mem.copy(u8, source[0..iI], tempInteger[0..iI]);
-    source[iI] = '.';
-    std.mem.copy(u8, source[iI + 1 .. iI + 1 + iF], tempFractional[0..iF]);
-    std.mem.set(u8, source[iI + iF + 1 ..], 'x');
 
-    std.log.info("== {s}", .{source});
+    // Pad with preceding zeroes.
+    const padding = std.mem.len(source) - iI - iF;
+    std.mem.set(u8, source[0..padding], '0');
+
+    // Copy the integer part
+    std.mem.copy(u8, source[padding .. iI + padding], tempInteger[0..iI]);
+
+    // Copy the fractional part
+    // We don't need a decimal separator because we know how many fractional digits are in the number.
+    std.mem.copy(u8, source[padding + iI .. padding + iI + iF], tempFractional[0..iF]);
 
     return decimal;
 }
@@ -326,7 +331,7 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
 }
 
 test "init and format works" {
-    std.testing.log_level = .debug;
+    // std.testing.log_level = .debug;
 
     var s = "03,141,592.65".*; // dereference the pointer to the array
     const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
@@ -334,8 +339,7 @@ test "init and format works" {
 
     try std.testing.expectEqual(@as(u32, 9), d.digits);
     try std.testing.expectEqual(@as(u32, 2), d.fractional);
-    std.log.info("s is now {s}", .{s});
-    try std.testing.expectEqualSlices(u8, &s, "0003141592.65");
+    try std.testing.expectEqualSlices(u8, "0000314159265", &s);
 }
 
 test "init allocates for source" {
