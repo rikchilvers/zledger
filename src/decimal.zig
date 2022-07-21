@@ -11,6 +11,8 @@ fractional: u32,
 digits: u32,
 /// Array of digits. Most significant first.
 source: [:0]const u8,
+/// Whether the source can be freed during expand et al
+safeToDeallocSource: bool,
 
 pub const RenderingInformation = struct {
     groupSeparator: u8 = 0, // e.g. 24,000
@@ -26,6 +28,7 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, render
     decimal.fractional = 0;
     decimal.digits = 0;
     decimal.source = source;
+    decimal.immutableSource = true;
 
     var groupSeparator: u8 = 0;
     var decimalSeparator: u8 = 0;
@@ -124,11 +127,65 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, render
 pub fn init(allocator: std.mem.Allocator, number: [:0]const u8, separator: ?*RenderingInformation) !*Self {
     var source = allocator.allocSentinel(u8, std.mem.len(number), 0) catch unreachable;
     std.mem.copy(u8, source, number);
-    return initWithSource(allocator, source, separator);
+    var result = initWithSource(allocator, source, separator);
+    result.immutableSource = false;
+    return result;
 }
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     allocator.destroy(self);
+}
+
+// Expand the Decimal so that it has at least nDigit digits and nFractional digits to the right of the decimal point.
+pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractional: u32) void {
+    const additionalFractional = nFractional - self.fractional;
+    const additionalInteger = (nDigit - self.digits) - additionalFractional;
+
+    if (additionalFractional == 0 and additionalInteger == 0) return;
+
+    // How many separators / decimal points there are
+    const otherCharCount = std.mem.len(self.source) - self.digits;
+
+    var newSource = allocator.allocSentinel(u8, std.mem.len(nDigit + otherCharCount + 1), 0) catch unreachable;
+
+    if (additionalInteger > 0) {
+        std.mem.copy(u8, newSource[additionalInteger..], self.source);
+        std.mem.set(u8, newSource[0..additionalInteger], 0);
+
+        self.digits += additionalInteger;
+    } else {
+        std.mem.copy(u8, newSource[0..std.mem.len(self.source)], self.source);
+    }
+
+    if (additionalFractional > 0) {
+        self.digits += additionalInteger;
+        self.fractional += additionalFractional;
+    }
+
+    if (self.safeToDeallocSource) allocator.free(self.source);
+    self.source = newSource;
+    self.safeToDeallocSource = true;
+}
+
+// Adds the value of other into self.
+// Both self and other might be reallocated to new memory by this function.
+// Both self and other might lose their original formatting.
+pub fn add(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
+    if (other == null) return;
+
+    var integerDigits = self.digits - self.fractional;
+    if (integerDigits > 0 and self.source[0] == 0) integerDigits -= 1;
+    if (integerDigits < other.digits - other.fractional) {
+        integerDigits = other.digits - other.fractional;
+    }
+
+    var fractionalDigits = self.fractional;
+    if (fractionalDigits < other.fractional) fractionalDigits = other.fractional;
+
+    var totalDigits = integerDigits + fractionalDigits + 1;
+
+    self.expand(allocator, totalDigits, fractionalDigits);
+    other.expand(allocator, totalDigits, fractionalDigits);
 }
 
 test "init allocates for source" {
@@ -209,7 +266,7 @@ test "parses decimals with . as decimal separator" {
 }
 
 test "parses decimals with , as decimal separator" {
-    std.testing.log_level = .debug;
+    // std.testing.log_level = .debug;
 
     const s: [:0]const u8 = "3,14159";
     const d = try Self.initWithSource(std.testing.allocator, s, null);
@@ -220,7 +277,7 @@ test "parses decimals with , as decimal separator" {
 }
 
 test "parses decimals with thousand separators" {
-    std.testing.log_level = .debug;
+    // std.testing.log_level = .debug;
 
     const s: [:0]const u8 = "3,141,592.65";
     var ri = RenderingInformation{};
@@ -236,7 +293,7 @@ test "parses decimals with thousand separators" {
 }
 
 test "parses decimals with thousand separators after decimal point" {
-    std.testing.log_level = .debug;
+    // std.testing.log_level = .debug;
 
     const s: [:0]const u8 = "3_141_592.650_123_430";
     var ri = RenderingInformation{};
@@ -252,7 +309,7 @@ test "parses decimals with thousand separators after decimal point" {
 }
 
 test "parses indian notation" {
-    std.testing.log_level = .debug;
+    // std.testing.log_level = .debug;
 
     const s: [:0]const u8 = "3,14,15,926.501123";
     var ri = RenderingInformation{};
@@ -268,7 +325,7 @@ test "parses indian notation" {
 }
 
 test "parses random notation" {
-    std.testing.log_level = .debug;
+    // std.testing.log_level = .debug;
 
     const s: [:0]const u8 = "3,14,15,92,6.501";
     var ri = RenderingInformation{};
@@ -281,4 +338,17 @@ test "parses random notation" {
     try std.testing.expectEqual(@as(u8, ','), ri.groupSeparator);
     try std.testing.expectEqual(@as(u8, '.'), ri.decimalSeparator);
     try std.testing.expectEqual(false, ri.indianNumbering);
+}
+
+test "adds integers" {
+    const a: [:0]const u8 = "4";
+    const b: [:0]const u8 = "6";
+    const aD = try Self.initWithSource(std.testing.allocator, a, null);
+    const bD = try Self.initWithSource(std.testing.allocator, b, null);
+    defer aD.deinit(std.testing.allocator);
+    defer bD.deinit(std.testing.allocator);
+
+    a.add(b);
+
+    try std.testing.expectEqualSentinel(u8, 0, "10", a.source);
 }
