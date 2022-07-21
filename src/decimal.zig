@@ -20,6 +20,143 @@ pub const RenderingInformation = struct {
     indianNumbering: bool = false, // e.g. 10,00,000
 };
 
+// This function does 3 different jobs.
+//     1. Parse whether the sign of the decimal and how many total digits and fractional digits it has.
+//     2. Identify how to render back if printed.
+//     3. Remove all grouping characters (e.g. the commas in 3,141,592) from the source and set the decimal
+//        separator to a period.
+pub fn initAndFormat(allocator: std.mem.Allocator, source: [:0]u8, renderingInformation: ?*RenderingInformation) !*Self {
+    var decimal = allocator.create(Self) catch unreachable;
+    errdefer allocator.destroy(decimal);
+
+    // Initialize the decimal to some sensible defaults.
+    decimal.positive = true;
+    decimal.fractional = 0;
+    decimal.digits = 0;
+    decimal.source = source;
+    decimal.safeToDeallocSource = true;
+
+    // Temporary storage of rendering information.
+    var groupSeparator: u8 = 0;
+    var decimalSeparator: u8 = 0;
+    var indianNumbering = false;
+
+    // Index into the source
+    var i: usize = 0;
+    // Position of last comma (used to guess if the source is formatted using Indian notation)
+    var j: usize = 0;
+
+    // We use two 32 byte arrays to temporarily hold digits either side of the decimal separator.
+    // These will be later copied back into the source to remove grouping characters.
+    std.debug.assert(std.mem.len(source) <= 64);
+    var tempInteger = [_:0]u8{0} ** 32;
+    var tempFractional = [_:0]u8{0} ** 32;
+
+    // Indices into the temp(Integer|Fractional) arrays
+    var iI: usize = 0;
+    var iF: usize = 0;
+
+    // Find the sign
+    if (source[i] == '-') {
+        decimal.positive = false;
+        i += 1;
+    } else if (source[i] == '+') {
+        i += 1;
+    }
+
+    // Skip over leading zeroes
+    while (i < std.mem.len(source)) : (i += 1) {
+        if (source[i] != '0') break;
+    }
+
+    while (i < std.mem.len(source)) : (i += 1) {
+        const c = source[i];
+        switch (c) {
+            '0'...'9' => {
+                decimal.digits += 1;
+
+                if (decimalSeparator == 0) {
+                    tempInteger[iI] = source[i];
+                    iI += 1;
+                } else {
+                    tempFractional[iF] = source[i];
+                    iF += 1;
+                }
+            },
+            ',' => {
+                switch (decimalSeparator) {
+                    0 => {
+                        // treat the first , as a decimal separator
+                        decimalSeparator = c;
+                        decimal.fractional = decimal.digits + 1;
+                    },
+                    '.' => {
+                        // afterwards, treat it as a group separator
+                        groupSeparator = ',';
+                    },
+                    else => {},
+                }
+
+                if (i - j == 3) {
+                    // speculative at this point
+                    indianNumbering = true;
+                }
+                j = i;
+            },
+            '_' => {
+                groupSeparator = '_';
+            },
+            '.' => {
+                if (decimalSeparator == ',') {
+                    groupSeparator = ',';
+                    // Because we previously treated a comma as the decimal separator,
+                    // all the fraction digits should now be moved to the integer digits
+                    std.mem.copy(u8, tempInteger[iI + 1 ..], tempFractional[0..iF]);
+                    std.mem.set(u8, tempFractional[0..iF], 0);
+                    iI = iI + 1 + iF;
+                    iF = 0;
+                }
+                decimalSeparator = '.';
+
+                decimal.fractional = decimal.digits + 1;
+
+                // If we've detected the number might be formated to match indian numbering,
+                // the previous , should be 3 digits prior to the decimal point
+                if (indianNumbering) {
+                    indianNumbering = i - j == 4;
+                }
+            },
+            else => {
+                return Error.UnexpectedCharacter;
+            },
+        }
+    }
+
+    // Until now, decimal.fractional has been storing the index of the first digit after the decimalSeparator.
+    // We need to change this now to reflect the actual number of fractional digits.
+    if (decimal.fractional > 0) {
+        decimal.fractional = decimal.digits - (decimal.fractional - 1);
+    }
+
+    if (renderingInformation) |ri| {
+        ri.*.groupSeparator = groupSeparator;
+        ri.*.decimalSeparator = decimalSeparator;
+        ri.*.indianNumbering = indianNumbering;
+    }
+
+    std.log.info(">> {s}.{s}", .{ tempInteger, tempFractional });
+
+    // Replace the source with the formatted version.
+    std.mem.copy(u8, source[0..iI], tempInteger[0..iI]);
+    source[iI] = '.';
+    std.mem.copy(u8, source[iI + 1 .. iI + 1 + iF], tempFractional[0..iF]);
+    std.mem.set(u8, source[iI + iF + 1 ..], 'x');
+
+    std.log.info("== {s}", .{source});
+
+    return decimal;
+}
+
 pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, renderingInformation: ?*RenderingInformation) !*Self {
     var decimal = allocator.create(Self) catch unreachable;
     errdefer allocator.destroy(decimal);
@@ -28,7 +165,7 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, render
     decimal.fractional = 0;
     decimal.digits = 0;
     decimal.source = source;
-    decimal.immutableSource = true;
+    decimal.safeToDeallocSource = true;
 
     var groupSeparator: u8 = 0;
     var decimalSeparator: u8 = 0;
@@ -127,8 +264,8 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, render
 pub fn init(allocator: std.mem.Allocator, number: [:0]const u8, separator: ?*RenderingInformation) !*Self {
     var source = allocator.allocSentinel(u8, std.mem.len(number), 0) catch unreachable;
     std.mem.copy(u8, source, number);
-    var result = initWithSource(allocator, source, separator);
-    result.immutableSource = false;
+    var result = try initWithSource(allocator, source, separator);
+    result.safeToDeallocSource = false;
     return result;
 }
 
@@ -186,6 +323,19 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
 
     self.expand(allocator, totalDigits, fractionalDigits);
     other.expand(allocator, totalDigits, fractionalDigits);
+}
+
+test "init and format works" {
+    std.testing.log_level = .debug;
+
+    var s = "03,141,592.65".*; // dereference the pointer to the array
+    const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
+    defer d.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 9), d.digits);
+    try std.testing.expectEqual(@as(u32, 2), d.fractional);
+    std.log.info("s is now {s}", .{s});
+    try std.testing.expectEqualSlices(u8, &s, "0003141592.65");
 }
 
 test "init allocates for source" {
@@ -340,15 +490,15 @@ test "parses random notation" {
     try std.testing.expectEqual(false, ri.indianNumbering);
 }
 
-test "adds integers" {
-    const a: [:0]const u8 = "4";
-    const b: [:0]const u8 = "6";
-    const aD = try Self.initWithSource(std.testing.allocator, a, null);
-    const bD = try Self.initWithSource(std.testing.allocator, b, null);
-    defer aD.deinit(std.testing.allocator);
-    defer bD.deinit(std.testing.allocator);
+// test "adds integers" {
+//     const a: [:0]const u8 = "4";
+//     const b: [:0]const u8 = "6";
+//     const aD = try Self.initWithSource(std.testing.allocator, a, null);
+//     const bD = try Self.initWithSource(std.testing.allocator, b, null);
+//     defer aD.deinit(std.testing.allocator);
+//     defer bD.deinit(std.testing.allocator);
 
-    a.add(b);
+//     a.add(b);
 
-    try std.testing.expectEqualSentinel(u8, 0, "10", a.source);
-}
+//     try std.testing.expectEqualSentinel(u8, 0, "10", a.source);
+// }
