@@ -11,8 +11,8 @@ fractional: u32,
 digits: u32,
 /// Array of digits. Most significant first.
 source: [:0]const u8,
-/// Whether the source can be freed during expand et al
-safeToDeallocSource: bool,
+/// Whether the source was allocated by the decimal
+ownedSource: bool,
 
 pub const RenderingInformation = struct {
     groupSeparator: u8 = 0, // e.g. 24,000
@@ -34,7 +34,7 @@ pub fn initAndFormat(allocator: std.mem.Allocator, source: [:0]u8, renderingInfo
     decimal.fractional = 0;
     decimal.digits = 0;
     decimal.source = source;
-    decimal.safeToDeallocSource = true;
+    decimal.ownedSource = true;
 
     // Temporary storage of rendering information.
     var groupSeparator: u8 = 0;
@@ -170,7 +170,7 @@ pub fn initWithSource(allocator: std.mem.Allocator, source: [:0]const u8, render
     decimal.fractional = 0;
     decimal.digits = 0;
     decimal.source = source;
-    decimal.safeToDeallocSource = true;
+    decimal.ownedSource = true;
 
     var groupSeparator: u8 = 0;
     var decimalSeparator: u8 = 0;
@@ -270,7 +270,7 @@ pub fn init(allocator: std.mem.Allocator, number: [:0]const u8, separator: ?*Ren
     var source = allocator.allocSentinel(u8, std.mem.len(number), 0) catch unreachable;
     std.mem.copy(u8, source, number);
     var result = try initWithSource(allocator, source, separator);
-    result.safeToDeallocSource = false;
+    result.ownedSource = false;
     return result;
 }
 
@@ -304,9 +304,9 @@ pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractiona
         self.fractional += additionalFractional;
     }
 
-    if (self.safeToDeallocSource) allocator.free(self.source);
+    if (self.ownedSource) allocator.free(self.source);
     self.source = newSource;
-    self.safeToDeallocSource = true;
+    self.ownedSource = true;
 }
 
 // Adds the value of other into self.
