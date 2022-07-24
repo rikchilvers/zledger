@@ -1,6 +1,8 @@
 const std = @import("std");
 
 const Error = error{UnexpectedCharacter};
+const MaxCharacters = 64;
+const Scratch: [MaxCharacters:0]u8 = [_:0]u8{'0'} ** MaxCharacters;
 
 const Self = @This();
 
@@ -11,7 +13,7 @@ fractional: u32,
 digits: u32,
 /// Array of digits. Most significant first.
 source: [:0]const u8,
-/// Whether the source was allocated by the decimal
+/// Whether the source was allocated by Self
 ownedSource: bool,
 
 pub const RenderingInformation = struct {
@@ -23,8 +25,7 @@ pub const RenderingInformation = struct {
 // This function does 3 different jobs.
 //     1. Parse whether the sign of the decimal and how many total digits and fractional digits it has.
 //     2. Identify how to render back if printed.
-//     3. Remove all grouping characters (e.g. the commas in 3,141,592) from the source and set the decimal
-//        separator to a period.
+//     3. Remove all non-digit characters from the source.
 pub fn initAndFormat(allocator: std.mem.Allocator, source: [:0]u8, renderingInformation: ?*RenderingInformation) !*Self {
     var decimal = allocator.create(Self) catch unreachable;
     errdefer allocator.destroy(decimal);
@@ -48,9 +49,9 @@ pub fn initAndFormat(allocator: std.mem.Allocator, source: [:0]u8, renderingInfo
 
     // We use two 32 byte arrays to temporarily hold digits either side of the decimal separator.
     // These will be later copied back into the source to remove grouping characters.
-    std.debug.assert(std.mem.len(source) <= 64);
-    var tempInteger = [_:0]u8{0} ** 32;
-    var tempFractional = [_:0]u8{0} ** 32;
+    std.debug.assert(std.mem.len(source) <= MaxCharacters);
+    var tempInteger = [_:0]u8{0} ** (MaxCharacters / 2);
+    var tempFractional = [_:0]u8{0} ** (MaxCharacters / 2);
 
     // Indices into the temp(Integer|Fractional) arrays
     var iI: usize = 0;
@@ -279,34 +280,50 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 }
 
 // Expand the Decimal so that it has at least nDigit digits and nFractional digits to the right of the decimal point.
-pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractional: u32) void {
+// This function expects that the decimal has been formatted to remove all non-digit characters
+// Returns the number of additional digits
+pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractional: u32) u32 {
     const additionalFractional = nFractional - self.fractional;
     const additionalInteger = (nDigit - self.digits) - additionalFractional;
 
-    if (additionalFractional == 0 and additionalInteger == 0) return;
+    if (additionalFractional == 0 and additionalInteger == 0) return 0;
 
-    // How many separators / decimal points there are
-    const otherCharCount = std.mem.len(self.source) - self.digits;
+    // We don't need to expand the source if there are enough available digits
+    const available = if (std.mem.len(self.source) >= self.digits) std.mem.len(self.source) - self.digits else 0;
 
-    var newSource = allocator.allocSentinel(u8, std.mem.len(nDigit + otherCharCount + 1), 0) catch unreachable;
+    var newSource = Scratch[0 .. nDigit + 1 :0];
+    if (available >= 1) {
+        // TODO: compare speed of reusing a scratch buffer instead of creating every time
+        // newSource = &([_]u8{'0'} ** MaxCharacters);
+    } else {
+        newSource = allocator.allocSentinel(u8, nDigit + 1, 0) catch unreachable;
+    }
 
     if (additionalInteger > 0) {
-        std.mem.copy(u8, newSource[additionalInteger..], self.source);
+        // [---314159]
+        std.mem.copy(u8, newSource[additionalInteger .. additionalInteger + nDigit], self.source);
+        // [00031459]
         std.mem.set(u8, newSource[0..additionalInteger], 0);
 
         self.digits += additionalInteger;
     } else {
+        // [314159??]
         std.mem.copy(u8, newSource[0..std.mem.len(self.source)], self.source);
     }
 
     if (additionalFractional > 0) {
+        // [314159000]
+        std.mem.set(u8, newSource[nDigit .. nDigit + additionalFractional], '0');
+
         self.digits += additionalInteger;
         self.fractional += additionalFractional;
     }
 
     if (self.ownedSource) allocator.free(self.source);
-    self.source = newSource;
+    self.source = newSource[0..nDigit];
     self.ownedSource = true;
+
+    return 0;
 }
 
 // Adds the value of other into self.
@@ -492,6 +509,21 @@ test "parses random notation" {
     try std.testing.expectEqual(@as(u8, ','), ri.groupSeparator);
     try std.testing.expectEqual(@as(u8, '.'), ri.decimalSeparator);
     try std.testing.expectEqual(false, ri.indianNumbering);
+}
+
+test "expands fractional" {
+    std.testing.log_level = .debug;
+
+    var s = "03,141,592.65".*; // dereference the pointer to the array
+    const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
+    defer d.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 9), d.digits);
+    try std.testing.expectEqual(@as(u32, 2), d.fractional);
+    try std.testing.expectEqualSlices(u8, "0000314159265", &s);
+
+    const spare = d.expand(std.testing.allocator, 10, 3);
+    try std.testing.expectEqual(@as(u32, 3), spare);
 }
 
 // test "adds integers" {
