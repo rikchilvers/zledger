@@ -282,51 +282,109 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 
 // Expand the Decimal so that it has at least nDigit digits and nFractional digits to the right of the decimal point.
 // This function expects that the decimal has been formatted to remove all non-digit characters
-// Returns the number of additional digits
+// Returns the number of unused characters at the start of the source (i.e. where the source could be sliced from)
 pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractional: u32) u32 {
+    std.debug.assert(nDigit >= self.digits);
+
+    const additionalDigits = nDigit - self.digits;
     const additionalFractional = nFractional - self.fractional;
-    const additionalInteger = (nDigit - self.digits) - additionalFractional;
+    const additionalInteger = additionalDigits - additionalFractional;
+    const available = std.mem.len(self.source) - self.digits;
 
-    if (additionalFractional == 0 and additionalInteger == 0) return 0;
+    if (additionalDigits == 0) return @intCast(u32, available);
 
-    // We don't need to expand the source if there are enough available digits
-    const available = if (std.mem.len(self.source) >= self.digits) std.mem.len(self.source) - self.digits else 0;
+    std.log.info("expanding {d}:{d} to {d}:{d}", .{
+        self.digits - self.fractional,
+        self.fractional,
+        nDigit - nFractional,
+        nFractional,
+    });
+    std.log.info("addInt = {d} | addFrac = {d}", .{ additionalInteger, additionalFractional });
+    std.log.info("\n\t source = {s}", .{self.source});
 
-    // const scratch = [_]u8{0} ** MaxCharacters;
+    // NOTE: During reallocation, sqlite3 adds 1 to how many chars are required in source. Why?
+    //       See sqlite/ext/misc/decimal.c:381
+    if (available >= additionalDigits) {
+        std.log.info("have enough in available ({d})", .{available});
 
-    var newSource: []u8 = undefined;
-    if (available >= 1) {
-        // newSource = scratch[0 .. nDigit + 1];
-        newSource = [_]u8{0} ** MaxCharacters;
-    } else {
-        newSource = allocator.alloc(u8, nDigit + 1) catch unreachable;
-    }
+        // If we have space and there are no additional fractional digits, we can return now
+        if (additionalFractional == 0) {
+            return @intCast(u32, available - additionalDigits);
+        }
 
-    if (additionalInteger > 0) {
-        // [---314159]
-        std.mem.copy(u8, newSource[additionalInteger .. additionalInteger + nDigit], self.source);
-        // [00031459]
-        std.mem.set(u8, newSource[0..additionalInteger], 0);
+        var scratch = [_]u8{'0'} ** 15;
 
-        self.digits += additionalInteger;
-    } else {
-        // [314159??]
-        std.mem.copy(u8, newSource[0..std.mem.len(self.source)], self.source);
-    }
+        if (additionalInteger > 0) {
+            std.log.info("{d} additional integers", .{additionalInteger});
+            // Copy source digits to scratch, leaving space for additional integers
+            // [---314159]
+            //     ^^^^^
+            std.mem.copy(u8, scratch[additionalInteger - 1 ..], self.source[available..]);
+            std.log.info("copied source digits to scratch\n\tscratch =  {d}", .{scratch[0 .. nDigit + 1]});
 
-    if (additionalFractional > 0) {
+            // Fill in additional integer space with zeroes
+            // [00031459]
+            //  ^^^
+            // std.mem.set(u8, scratch[0..additionalInteger], '0');
+            // std.log.info("addInt done\n\tscratch =  {d}", .{scratch[0 .. nDigit + 1]});
+
+            self.digits += additionalInteger;
+        } else {
+            std.log.info("no additional integers", .{});
+            // Copy source digits to scratch
+            // [314159--]
+            //  ^^^^^
+            std.mem.copy(u8, scratch[available - additionalDigits ..], self.source[available..]);
+            std.log.info("copied source digits to scratch\n\tscratch = {s}", .{scratch});
+        }
+
+        // Handle fractional part
+        // We know there must be one because we've checked above
+
+        // Set fractional part to zeroes
         // [314159000]
-        std.mem.set(u8, newSource[nDigit .. nDigit + additionalFractional], '0');
+        //       ^^^
+        // std.mem.set(u8, scratch[available - additionalInteger ..], '0');
+        // std.log.info("addFrac\n\tscratch = {s}", .{scratch});
 
         self.digits += additionalInteger;
         self.fractional += additionalFractional;
+
+        // Update self.source
+        // TODO: this should probably start at available
+        std.mem.copy(u8, self.source[0..], scratch[0..std.mem.len(self.source)]);
+        std.log.info("copied scratch to scratch\n\t source = {s}", .{self.source});
+
+        return @intCast(u32, available - 1);
+    } else {
+        var scratch = allocator.alloc(u8, nDigit + 1) catch unreachable;
+
+        if (additionalInteger > 0) {
+            // [---314159]
+            std.mem.copy(u8, scratch[additionalInteger .. additionalInteger + nDigit], self.source);
+            // [00031459]
+            std.mem.set(u8, scratch[0..additionalInteger], 0);
+
+            self.digits += additionalInteger;
+        } else {
+            // [314159??]
+            std.mem.copy(u8, scratch[0..std.mem.len(self.source)], self.source);
+        }
+
+        if (additionalFractional > 0) {
+            // [314159000]
+            std.mem.set(u8, scratch[nDigit .. nDigit + additionalFractional], '0');
+
+            self.digits += additionalInteger;
+            self.fractional += additionalFractional;
+        }
+
+        if (self.ownedSource) allocator.free(self.source);
+        self.source = scratch[0..nDigit];
+        self.ownedSource = true;
+
+        return 0;
     }
-
-    if (self.ownedSource) allocator.free(self.source);
-    self.source = newSource[0..nDigit];
-    self.ownedSource = true;
-
-    return 0;
 }
 
 // Adds the value of other into self.
@@ -502,19 +560,61 @@ test "parses random notation" {
     try std.testing.expectEqual(false, ri.indianNumbering);
 }
 
-test "expands fractional" {
-    std.testing.log_level = .debug;
+test "expand returns early if no new digits required" {
+    // std.testing.log_level = .debug;
+    // std.log.info("", .{});
 
-    var s = "03,141,592.65".*; // dereference the pointer to the array
+    var s = "03,141,5.92".*; // dereference the pointer to the array
+    //       00003141592
     const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
     defer d.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(u32, 9), d.digits);
+    try std.testing.expectEqual(@as(u32, 7), d.digits);
     try std.testing.expectEqual(@as(u32, 2), d.fractional);
-    try std.testing.expectEqualSlices(u8, "0000314159265", &s);
+    try std.testing.expectEqualSlices(u8, "00003141592", &s);
 
-    // const spare = d.expand(std.testing.allocator, 10, 3);
-    // try std.testing.expectEqual(@as(u32, 3), spare);
+    const spareChars = d.expand(std.testing.allocator, 7, 2);
+    // should be no change to source during this expand
+    try std.testing.expectEqualSlices(u8, "00003141592", &s);
+    try std.testing.expectEqual(@as(u32, 4), spareChars);
+}
+
+test "expand returns early if no additional fractional and enough available space" {
+    // std.testing.log_level = .debug;
+    // std.log.info("", .{});
+
+    var s = "03,141,5.92".*; // dereference the pointer to the array
+    //       00003141592
+    const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
+    defer d.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 7), d.digits);
+    try std.testing.expectEqual(@as(u32, 2), d.fractional);
+    try std.testing.expectEqualSlices(u8, "00003141592", &s);
+
+    const spareChars = d.expand(std.testing.allocator, 9, 2);
+    // should be no change to source during this expand
+    try std.testing.expectEqualSlices(u8, "00003141592", &s);
+    try std.testing.expectEqual(@as(u32, 2), spareChars);
+}
+
+test "expands fractional" {
+    std.testing.log_level = .debug;
+    std.log.info("", .{});
+
+    var s = "03,141,5.92".*; // dereference the pointer to the array
+    //       00003141592
+    // 11 digits
+    const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
+    defer d.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 7), d.digits);
+    try std.testing.expectEqual(@as(u32, 2), d.fractional);
+    try std.testing.expectEqualSlices(u8, "00003141592", &s);
+
+    const spare = d.expand(std.testing.allocator, 8, 3);
+    try std.testing.expectEqualSlices(u8, "00031415920", &s);
+    try std.testing.expectEqual(@as(u32, 3), spare);
 }
 
 // test "adds integers" {
