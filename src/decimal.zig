@@ -31,7 +31,6 @@ pub fn initAndFormat(allocator: std.mem.Allocator, source: []u8, renderingInform
     var decimal = allocator.create(Self) catch unreachable;
     errdefer allocator.destroy(decimal);
 
-    // Initialize the decimal to some sensible defaults.
     decimal.positive = true;
     decimal.fractional = 0;
     decimal.digits = 0;
@@ -192,7 +191,6 @@ pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractiona
     // NOTE: During reallocation, sqlite3 adds 1 to how many chars are required in source. Why?
     //       See sqlite/ext/misc/decimal.c:381
     if (available >= additionalDigits) {
-
         // If we have space and there are no additional fractional digits, we can return now
         if (additionalFractional == 0) return @intCast(u32, available - additionalDigits);
 
@@ -209,13 +207,13 @@ pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractiona
 
         return @intCast(u32, available - additionalDigits);
     } else {
-        var scratch = allocator.alloc(u8, nDigit + 1) catch unreachable;
+        var scratch = allocator.alloc(u8, nDigit) catch unreachable;
 
         if (additionalInteger > 0) {
             // [---314159]
-            std.mem.copy(u8, scratch[additionalInteger .. additionalInteger + nDigit], self.source);
+            std.mem.copy(u8, scratch[additionalInteger..], self.source[available..]);
             // [00031459]
-            std.mem.set(u8, scratch[0..additionalInteger], 0);
+            std.mem.set(u8, scratch[0..additionalInteger], '0');
 
             self.digits += additionalInteger;
         } else {
@@ -232,7 +230,7 @@ pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractiona
         }
 
         if (self.ownedSource) allocator.free(self.source);
-        self.source = scratch[0..nDigit];
+        self.source = scratch;
         self.ownedSource = true;
 
         return 0;
@@ -243,8 +241,6 @@ pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractiona
 // Both self and other might be reallocated to new memory by this function.
 // Both self and other might lose their original formatting.
 pub fn add(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
-    if (other == null) return;
-
     var integerDigits = self.digits - self.fractional;
     if (integerDigits > 0 and self.source[0] == 0) integerDigits -= 1;
     if (integerDigits < other.digits - other.fractional) {
@@ -256,8 +252,10 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
 
     var totalDigits = integerDigits + fractionalDigits + 1;
 
-    self.expand(allocator, totalDigits, fractionalDigits);
-    other.expand(allocator, totalDigits, fractionalDigits);
+    const available = self.expand(allocator, totalDigits, fractionalDigits);
+    const otherAvailable = other.expand(allocator, totalDigits, fractionalDigits);
+
+    if (available > otherAvailable) {}
 }
 
 test "init and format works" {
@@ -378,7 +376,7 @@ test "error on mixed thousand-marks" {
     try std.testing.expectError(Error.UnexpectedCharacter, d);
 }
 
-test "expand: no change" {
+test "expand (local): no change" {
     std.testing.log_level = .debug;
 
     var s = "0031,415.92".*; // dereference the pointer to the array
@@ -396,7 +394,7 @@ test "expand: no change" {
     try std.testing.expectEqual(@as(u32, 4), spareChars);
 }
 
-test "expand: only additional integers" {
+test "expand (local): additional integers" {
     std.testing.log_level = .debug;
 
     var s = "0031,415.92".*; // dereference the pointer to the array
@@ -414,7 +412,7 @@ test "expand: only additional integers" {
     try std.testing.expectEqual(@as(u32, 2), spareChars);
 }
 
-test "expand: only additional fractional" {
+test "expand (local): additional fractional" {
     // std.testing.log_level = .debug;
 
     var s = "0031,415.92".*; // dereference the pointer to the array
@@ -431,7 +429,7 @@ test "expand: only additional fractional" {
     try std.testing.expectEqual(@as(u32, 3), spareChars);
 }
 
-test "expand: additional integers and additional fractional" {
+test "expand (local): additional integers and additional fractional" {
     // std.testing.log_level = .debug;
 
     var s = "0031,415.92".*; // dereference the pointer to the array
@@ -448,15 +446,68 @@ test "expand: additional integers and additional fractional" {
     try std.testing.expectEqual(@as(u32, 2), spareChars);
 }
 
+test "expand (alloc): no change" {
+    // std.testing.log_level = .debug;
+
+    const d = try Self.init(std.testing.allocator, "0031,415.92", null);
+    defer d.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 7), d.digits);
+    try std.testing.expectEqual(@as(u32, 2), d.fractional);
+    try std.testing.expectEqualSlices(u8, "00003141592", d.source);
+
+    const spareChars = d.expand(std.testing.allocator, 7, 2);
+    // should be no change to source during this expand
+    try std.testing.expectEqualSlices(u8, "00003141592", d.source);
+    try std.testing.expectEqual(@as(u32, 4), spareChars);
+}
+
+test "expand (alloc): additional integers" {
+    // std.testing.log_level = .debug;
+
+    const d = try Self.init(std.testing.allocator, "3", null);
+    defer d.deinit(std.testing.allocator);
+
+    const spareChars = d.expand(std.testing.allocator, 2, 0);
+    try std.testing.expectEqual(@as(u32, 0), spareChars);
+
+    try std.testing.expectEqualSlices(u8, "03", d.source);
+}
+
+test "expand (alloc): additional fractional" {
+    // std.testing.log_level = .debug;
+
+    const d = try Self.init(std.testing.allocator, "3.1", null);
+    defer d.deinit(std.testing.allocator);
+
+    const spareChars = d.expand(std.testing.allocator, 3, 2);
+    try std.testing.expectEqual(@as(u32, 0), spareChars);
+
+    try std.testing.expectEqualSlices(u8, "310", d.source);
+}
+
+test "expand (alloc): additional integers and additional fractional" {
+    // std.testing.log_level = .debug;
+
+    const d = try Self.init(std.testing.allocator, "0031,415.92", null);
+    defer d.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 7), d.digits);
+    try std.testing.expectEqual(@as(u32, 2), d.fractional);
+    try std.testing.expectEqualSlices(u8, "00003141592", d.source);
+
+    const spareChars = d.expand(std.testing.allocator, 9, 3);
+    try std.testing.expectEqualSlices(u8, "00031415920", d.source);
+    try std.testing.expectEqual(@as(u32, 2), spareChars);
+}
+
 // test "adds integers" {
-//     const a: []u8 = "4";
-//     const b: []u8 = "6";
-//     const aD = try Self.initWithSource(std.testing.allocator, a, null);
-//     const bD = try Self.initWithSource(std.testing.allocator, b, null);
-//     defer aD.deinit(std.testing.allocator);
-//     defer bD.deinit(std.testing.allocator);
+//     const a = try Self.init(std.testing.allocator, "4", null);
+//     const b = try Self.init(std.testing.allocator, "6", null);
+//     defer a.deinit(std.testing.allocator);
+//     defer b.deinit(std.testing.allocator);
 
-//     a.add(b);
+//     a.add(std.testing.allocator, b);
 
-//     try std.testing.expectEqualSentinel(u8, 0, "10", a.source);
+//     try std.testing.expectEqualSlices(u8, "10", a.source);
 // }
