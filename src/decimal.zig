@@ -239,23 +239,43 @@ pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractiona
 
 // Adds the value of other into self.
 // Both self and other might be reallocated to new memory by this function.
-// Both self and other might lose their original formatting.
 pub fn add(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
     var integerDigits = self.digits - self.fractional;
     if (integerDigits > 0 and self.source[0] == 0) integerDigits -= 1;
-    if (integerDigits < other.digits - other.fractional) {
-        integerDigits = other.digits - other.fractional;
-    }
+    if (integerDigits < other.digits - other.fractional) integerDigits = other.digits - other.fractional;
 
     var fractionalDigits = self.fractional;
     if (fractionalDigits < other.fractional) fractionalDigits = other.fractional;
 
     var totalDigits = integerDigits + fractionalDigits + 1;
 
+    // Both self and other might have padding zeroes as a result of formatting while they were being parsed.
+    // To compare them, we need to skip these
     const available = self.expand(allocator, totalDigits, fractionalDigits);
     const otherAvailable = other.expand(allocator, totalDigits, fractionalDigits);
 
-    if (available > otherAvailable) {}
+    const a = self.source[available..];
+    const b = other.source[otherAvailable..];
+
+    if (self.positive and other.positive) {
+        var carry: u8 = 0;
+        var i = totalDigits - 1;
+
+        // We have to shuffle the values around by 48 as this is ASCII for 0.
+        while (i >= 0) {
+            const x = a[i] + b[i] + carry - 48 * 2;
+            if (x >= 10) {
+                carry = 1;
+                a[i] = x - 10 + 48;
+            } else {
+                carry = 0;
+                a[i] = x + 48;
+            }
+
+            if (i == 0) break;
+            i -= 1;
+        }
+    }
 }
 
 test "init and format works" {
@@ -501,13 +521,15 @@ test "expand (alloc): additional integers and additional fractional" {
     try std.testing.expectEqual(@as(u32, 2), spareChars);
 }
 
-// test "adds integers" {
-//     const a = try Self.init(std.testing.allocator, "4", null);
-//     const b = try Self.init(std.testing.allocator, "6", null);
-//     defer a.deinit(std.testing.allocator);
-//     defer b.deinit(std.testing.allocator);
+test "adds integers of the same sign" {
+    std.testing.log_level = .debug;
 
-//     a.add(std.testing.allocator, b);
+    const a = try Self.init(std.testing.allocator, "4", null);
+    const b = try Self.init(std.testing.allocator, "6", null);
+    defer a.deinit(std.testing.allocator);
+    defer b.deinit(std.testing.allocator);
 
-//     try std.testing.expectEqualSlices(u8, "10", a.source);
-// }
+    a.add(std.testing.allocator, b);
+
+    try std.testing.expectEqualSlices(u8, "10", a.source);
+}
