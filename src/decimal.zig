@@ -170,39 +170,134 @@ pub fn init(allocator: std.mem.Allocator, number: []const u8, separator: ?*Rende
     return result;
 }
 
+// Does not allocate for the source and does not format
+pub fn parse(allocator: std.mem.Allocator, source: []u8, renderingInformation: ?*RenderingInformation) !*Self {
+    _ = allocator;
+    _ = source;
+    _ = renderingInformation;
+    unreachable;
+}
+
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     if (self.ownedSource) allocator.free(self.source);
     allocator.destroy(self);
 }
 
-// Expand the Decimal so that it has at least nDigit digits and nFractional digits to the right of the decimal point.
-// This function expects that the decimal has been formatted to remove all non-digit characters
-// Returns the number of unused characters at the start of the source (i.e. where the source could be sliced from)
+pub fn accommodate(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
+    // Skip over zeroes
+    var available: usize = 0;
+    while (available < std.mem.len(self.source)) : (available += 1) {
+        if (self.source[available] != '0') break;
+    }
+
+    // We do this calculation because the number of digits might have drifted out
+    // FIXME: could this come at the end of add?
+    const selfInt = @intCast(u32, std.mem.len(self.source)) - @intCast(u32, available) - self.fractional;
+    const otherInt = other.digits - other.fractional;
+    const addInt = if (selfInt >= otherInt) 0 else otherInt - selfInt;
+    const addDec = if (self.fractional >= other.fractional) 0 else other.fractional - self.fractional;
+
+    std.log.info("     self {d}", .{self.source});
+    std.log.info("available {d}", .{available});
+    std.log.info("     self {d}.{d}", .{ selfInt, self.fractional });
+    std.log.info("      add {d}.{d}", .{ addInt, addDec });
+
+    if (available >= addDec + addInt + 1) {
+        std.log.info("no allocation required", .{});
+        defer std.log.info("self {d}.{d}", .{ self.digits - self.fractional, self.fractional });
+
+        if (addDec == 0) {
+            // If there are no additional decimal digits, we don't need to move anything around:
+            // we can just tell self that some of the available space is now used.
+            self.digits = self.fractional + selfInt + addInt + 1;
+            return;
+        }
+
+        var scratch = [_]u8{'0'} ** MaxCharacters;
+        // TODO: check we won't overflow this
+
+        // Copy all significant digits (i.e. not any preceding unused characters) from source into scratch, making space for additional fractional.
+        std.mem.copy(u8, scratch[available - addDec ..], self.source[available..]);
+
+        // Update self.source
+        std.mem.copy(u8, self.source[0..], scratch[0..std.mem.len(self.source)]);
+        self.digits = selfInt + addInt + addDec + 1;
+        self.fractional += addDec;
+    } else {
+        const size = selfInt + addInt + self.fractional + addDec + 1;
+        std.log.info("allocation size required: {d}", .{size});
+        var scratch = allocator.alloc(u8, size) catch unreachable;
+
+        if (addInt > 0) {
+            // [---314159]
+            std.mem.copy(u8, scratch[addInt + 1 ..], self.source[available..]);
+            // [00031459]
+            std.mem.set(u8, scratch[0 .. addInt + 1], '0');
+
+            self.digits += addInt + 1;
+        } else {
+            // [314159??]
+            std.mem.copy(u8, scratch[0..], self.source);
+        }
+
+        if (addDec > 0) {
+            // [314159000]
+            std.mem.set(u8, scratch[size - 1 ..], '0');
+
+            self.digits += addDec;
+            self.fractional += addDec;
+        }
+
+        if (self.ownedSource) allocator.free(self.source);
+        self.source = scratch;
+        self.ownedSource = true;
+    }
+}
+
+// Expand the Decimal so that it has at least nDigit digits and nFractional digits.
+// This function expects that the decimal has been formatted to remove all non-digit characters.
+// Returns the number of unused characters at the start of the source.
 pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractional: u32) u32 {
     std.debug.assert(nDigit >= self.digits);
 
+    std.log.info("expanding {d} to {d}:{d}", .{ self.source, nDigit, nFractional });
+
+    var available: usize = 0;
+    while (available < std.mem.len(self.source)) : (available += 1) {
+        if (self.source[available] != '0') break;
+    }
+    // const available = std.mem.len(self.source) - self.digits;
+
+    std.log.info("\t{d} available", .{available});
     const additionalDigits = nDigit - self.digits;
     const additionalFractional = nFractional - self.fractional;
     const additionalInteger = additionalDigits - additionalFractional;
-    const available = std.mem.len(self.source) - self.digits;
+
+    std.log.info("+D = {d}\t+F = {d}\t\t+I = {d}", .{
+        additionalDigits,
+        additionalFractional,
+        additionalInteger,
+    });
 
     if (additionalDigits == 0) return @intCast(u32, available);
 
     // NOTE: During reallocation, sqlite3 adds 1 to how many chars are required in source. Why?
     //       See sqlite/ext/misc/decimal.c:381
     if (available >= additionalDigits) {
+        std.log.info("\thave enough available", .{});
         // If we have space and there are no additional fractional digits, we can return now
         if (additionalFractional == 0) {
             self.digits += additionalInteger;
             return @intCast(u32, available - additionalDigits);
         }
 
-        var scratch = [_]u8{'0'} ** 15;
+        var scratch = [_]u8{'0'} ** MaxCharacters;
+        // TODO: add check that we won't go beyond this
 
         // Copy all significant digits (i.e. not any preceding unused characters) from source into scratch, making space for additional fractional.
         std.mem.copy(u8, scratch[available - additionalFractional ..], self.source[available..]);
 
-        self.digits += additionalInteger;
+        // self.digits += additionalInteger;
         self.fractional += additionalFractional;
 
         // Update self.source
@@ -243,19 +338,28 @@ pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractiona
 // Adds the value of other into self.
 // Both self and other might be reallocated to new memory by this function.
 pub fn add(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
+    std.log.info("\n>> add {s} to {s}", .{ other.source, self.source });
+
     var integerDigits = self.digits - self.fractional;
-    if (integerDigits > 0 and self.source[0] == 0) integerDigits -= 1;
-    if (integerDigits < other.digits - other.fractional) integerDigits = other.digits - other.fractional;
+    var otherIntegers = other.digits - other.fractional;
+    // if (integerDigits > 0 and self.source[0] == 0) integerDigits -= 1;
+    // if (otherIntegers > 0 and other.source[0] == 0) otherIntegers -= 1;
+    if (integerDigits < otherIntegers) integerDigits = otherIntegers;
 
     var fractionalDigits = self.fractional;
     if (fractionalDigits < other.fractional) fractionalDigits = other.fractional;
 
     const totalDigits = integerDigits + fractionalDigits + 1;
 
-    // Both self and other might have padding zeroes as a result of formatting while they were being parsed.
+    // Self and other might have padding zeroes as a result of formatting while they were being parsed.
     // To compare them later, we need to skip these.
+    //
+    // FIXME: instead of having expand pass back the space, we could just do len - digits
+    std.log.info(">> expand self", .{});
     const available = self.expand(allocator, totalDigits, fractionalDigits);
-    const otherAvailable = other.expand(allocator, totalDigits, fractionalDigits);
+
+    // FIXME: I don't think this is the correct adjustment. Maybe just while over the zeroes?
+    const otherAvailable = std.mem.len(other.source) - other.digits;
 
     if (self.positive == other.positive) {
         var carry: u8 = 0;
@@ -263,6 +367,7 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
 
         // We have to shuffle the values around by 48 as this is ASCII for 0.
         while (i >= 0) {
+            std.log.info("attempting to index {d} + {d}", .{ available, i });
             const x = self.source[available + i] + other.source[otherAvailable + i] + carry - 48 * 2;
 
             if (x >= 10) {
@@ -309,8 +414,6 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
 }
 
 test "init and format works" {
-    // std.testing.log_level = .debug;
-
     var s = "03,141,592.65".*; // dereference the pointer to the array
     const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
     defer d.deinit(std.testing.allocator);
@@ -321,8 +424,6 @@ test "init and format works" {
 }
 
 test "init allocates for source" {
-    // std.testing.log_level = .debug;
-
     const d = try Self.init(std.testing.allocator, "3.14159", null);
     defer d.deinit(std.testing.allocator);
 
@@ -331,8 +432,6 @@ test "init allocates for source" {
 }
 
 test "parses integers" {
-    // std.testing.log_level = .debug;
-
     const d = try Self.init(std.testing.allocator, "314159", null);
     defer d.deinit(std.testing.allocator);
 
@@ -341,8 +440,6 @@ test "parses integers" {
 }
 
 test "parses positive integers" {
-    // std.testing.log_level = .debug;
-
     const d = try Self.init(std.testing.allocator, "+314159", null);
     defer d.deinit(std.testing.allocator);
 
@@ -352,8 +449,6 @@ test "parses positive integers" {
 }
 
 test "parses negative integers" {
-    // std.testing.log_level = .debug;
-
     const d = try Self.init(std.testing.allocator, "-314159", null);
     defer d.deinit(std.testing.allocator);
 
@@ -363,15 +458,11 @@ test "parses negative integers" {
 }
 
 test "error on unexpected character" {
-    // std.testing.log_level = .debug;
-
     const d = Self.init(std.testing.allocator, "314159a", null);
     try std.testing.expectError(Error.UnexpectedCharacter, d);
 }
 
 test "parses decimals with period as decimal separator" {
-    // std.testing.log_level = .debug;
-
     const d = try Self.init(std.testing.allocator, "3.14159", null);
     defer d.deinit(std.testing.allocator);
 
@@ -380,8 +471,6 @@ test "parses decimals with period as decimal separator" {
 }
 
 test "parses decimals with comma as decimal separator" {
-    // std.testing.log_level = .debug;
-
     const d = try Self.init(std.testing.allocator, "3,14159", null);
     defer d.deinit(std.testing.allocator);
 
@@ -390,8 +479,6 @@ test "parses decimals with comma as decimal separator" {
 }
 
 test "parses decimals with thousand separators" {
-    // std.testing.log_level = .debug;
-
     var ri = RenderingInformation{};
     const d = try Self.init(std.testing.allocator, "3,141,592.65", &ri);
     defer d.deinit(std.testing.allocator);
@@ -409,8 +496,6 @@ test "errors on thousand-marks after decimal point" {
 }
 
 test "error on incorrect thousand-mark placement" {
-    // std.testing.log_level = .debug;
-
     const a = Self.init(std.testing.allocator, "3,14,1592.501", null);
     try std.testing.expectError(Error.IncorrectThousandMark, a);
 
@@ -427,8 +512,6 @@ test "error on mixed thousand-marks" {
 }
 
 test "expand (local): no change" {
-    // std.testing.log_level = .debug;
-
     var s = "0031,415.92".*; // dereference the pointer to the array
     //       00003141592
     const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
@@ -445,8 +528,6 @@ test "expand (local): no change" {
 }
 
 test "expand (local): additional integers" {
-    // std.testing.log_level = .debug;
-
     var s = "0031,415.92".*; // dereference the pointer to the array
     //       00003141592
     const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
@@ -463,8 +544,6 @@ test "expand (local): additional integers" {
 }
 
 test "expand (local): additional fractional" {
-    // std.testing.log_level = .debug;
-
     var s = "0031,415.92".*; // dereference the pointer to the array
     //       00003141592
     const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
@@ -480,8 +559,6 @@ test "expand (local): additional fractional" {
 }
 
 test "expand (local): additional integers and additional fractional" {
-    // std.testing.log_level = .debug;
-
     var s = "0031,415.92".*; // dereference the pointer to the array
     //       00003141592
     const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
@@ -497,8 +574,6 @@ test "expand (local): additional integers and additional fractional" {
 }
 
 test "expand (alloc): no change" {
-    // std.testing.log_level = .debug;
-
     const d = try Self.init(std.testing.allocator, "0031,415.92", null);
     defer d.deinit(std.testing.allocator);
 
@@ -513,8 +588,6 @@ test "expand (alloc): no change" {
 }
 
 test "expand (alloc): additional integers" {
-    // std.testing.log_level = .debug;
-
     const d = try Self.init(std.testing.allocator, "3", null);
     defer d.deinit(std.testing.allocator);
 
@@ -525,8 +598,6 @@ test "expand (alloc): additional integers" {
 }
 
 test "expand (alloc): additional fractional" {
-    // std.testing.log_level = .debug;
-
     const d = try Self.init(std.testing.allocator, "3.1", null);
     defer d.deinit(std.testing.allocator);
 
@@ -537,8 +608,6 @@ test "expand (alloc): additional fractional" {
 }
 
 test "expand (alloc): additional integers and additional fractional" {
-    // std.testing.log_level = .debug;
-
     const d = try Self.init(std.testing.allocator, "0031,415.92", null);
     defer d.deinit(std.testing.allocator);
 
@@ -551,96 +620,180 @@ test "expand (alloc): additional integers and additional fractional" {
     try std.testing.expectEqual(@as(u32, 2), spareChars);
 }
 
-test "adds two positive integers" {
+test "accommodate: no allocations" {
     // std.testing.log_level = .debug;
+    std.log.info("", .{});
 
-    const a = try Self.init(std.testing.allocator, "4", null);
-    const b = try Self.init(std.testing.allocator, "6", null);
+    var a = try Self.init(std.testing.allocator, "003", null);
     defer a.deinit(std.testing.allocator);
+    var b = try Self.init(std.testing.allocator, "010", null);
     defer b.deinit(std.testing.allocator);
 
-    a.add(std.testing.allocator, b);
+    try std.testing.expectEqual(@as(u32, 1), a.digits);
+    try std.testing.expectEqual(@as(u32, 0), a.fractional);
 
-    try std.testing.expectEqualSlices(u8, "10", a.source);
-}
+    try std.testing.expectEqual(@as(u32, 2), b.digits);
+    try std.testing.expectEqual(@as(u32, 0), b.fractional);
 
-test "adds two positive decimals" {
-    // std.testing.log_level = .debug;
+    std.log.info(">> accommodate", .{});
+    a.accommodate(std.testing.allocator, b);
 
-    const a = try Self.init(std.testing.allocator, "4.2", null);
-    const b = try Self.init(std.testing.allocator, "6.9", null);
-    defer a.deinit(std.testing.allocator);
-    defer b.deinit(std.testing.allocator);
-
-    a.add(std.testing.allocator, b);
-
-    try std.testing.expectEqualSlices(u8, "111", a.source);
-}
-
-test "adds two negative integers" {
-    // std.testing.log_level = .debug;
-    // std.log.info("", .{});
-
-    const a = try Self.init(std.testing.allocator, "-8", null);
-    const b = try Self.init(std.testing.allocator, "-3", null);
-    defer a.deinit(std.testing.allocator);
-    defer b.deinit(std.testing.allocator);
-
-    a.add(std.testing.allocator, b);
-
-    try std.testing.expectEqualSlices(u8, "11", a.source);
-    try std.testing.expect(!a.positive);
-}
-
-test "adds two negative decimals" {
-    // std.testing.log_level = .debug;
-    // std.log.info("", .{});
-
-    const a = try Self.init(std.testing.allocator, "-8.7", null);
-    const b = try Self.init(std.testing.allocator, "-3.2", null);
-    defer a.deinit(std.testing.allocator);
-    defer b.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(u32, 2), a.digits);
-    try std.testing.expectEqual(@as(u32, 1), a.fractional);
-
-    a.add(std.testing.allocator, b);
-
+    try std.testing.expectEqualSlices(u8, "003", a.source);
     try std.testing.expectEqual(@as(u32, 3), a.digits);
-    try std.testing.expectEqual(@as(u32, 1), a.fractional);
-    try std.testing.expect(!a.positive);
-    try std.testing.expectEqualSlices(u8, "0119", a.source);
+    try std.testing.expectEqual(@as(u32, 0), a.fractional);
+
+    std.log.info(">> accommodate", .{});
+    a.accommodate(std.testing.allocator, b);
+
+    try std.testing.expectEqualSlices(u8, "003", a.source);
+    try std.testing.expectEqual(@as(u32, 3), a.digits);
+    try std.testing.expectEqual(@as(u32, 0), a.fractional);
+
+    std.log.info(">> accommodate", .{});
+    a.accommodate(std.testing.allocator, b);
+
+    try std.testing.expectEqualSlices(u8, "003", a.source);
+    try std.testing.expectEqual(@as(u32, 3), a.digits);
+    try std.testing.expectEqual(@as(u32, 0), a.fractional);
 }
 
-test "adds integers of opposite signs" {
-    // std.testing.log_level = .debug;
-    // std.log.info("", .{});
+test "accommodate: allocations" {
+    std.testing.log_level = .debug;
+    std.log.info("", .{});
 
-    const a = try Self.init(std.testing.allocator, "4", null);
-    const b = try Self.init(std.testing.allocator, "-6", null);
+    var a = try Self.init(std.testing.allocator, "3", null);
     defer a.deinit(std.testing.allocator);
+    var b = try Self.init(std.testing.allocator, "010", null);
     defer b.deinit(std.testing.allocator);
 
-    a.add(std.testing.allocator, b);
+    try std.testing.expectEqual(@as(u32, 1), a.digits);
+    try std.testing.expectEqual(@as(u32, 0), a.fractional);
 
-    try std.testing.expectEqualSlices(u8, "02", a.source);
-    try std.testing.expect(!a.positive);
+    try std.testing.expectEqual(@as(u32, 2), b.digits);
+    try std.testing.expectEqual(@as(u32, 0), b.fractional);
+
+    std.log.info(">> accommodate", .{});
+    a.accommodate(std.testing.allocator, b);
+    std.log.info(">> source = {d}", .{a.source});
+
+    try std.testing.expectEqualSlices(u8, "003", a.source);
+    try std.testing.expectEqual(@as(u32, 3), a.digits);
+    try std.testing.expectEqual(@as(u32, 0), a.fractional);
+
+    std.log.info(">> accommodate", .{});
+    a.accommodate(std.testing.allocator, b);
+    std.log.info(">> source = {d}", .{a.source});
+
+    try std.testing.expectEqualSlices(u8, "003", a.source);
+    try std.testing.expectEqual(@as(u32, 3), a.digits);
+    try std.testing.expectEqual(@as(u32, 0), a.fractional);
+
+    std.log.info(">> accommodate", .{});
+    a.accommodate(std.testing.allocator, b);
+    std.log.info(">> source = {d}", .{a.source});
+
+    try std.testing.expectEqualSlices(u8, "003", a.source);
+    try std.testing.expectEqual(@as(u32, 3), a.digits);
+    try std.testing.expectEqual(@as(u32, 0), a.fractional);
 }
 
-test "adds decimals of opposite signs" {
-    // std.testing.log_level = .debug;
-    // std.log.info("", .{});
+// test "adds two positive integers" {
+//     const a = try Self.init(std.testing.allocator, "4", null);
+//     const b = try Self.init(std.testing.allocator, "6", null);
+//     defer a.deinit(std.testing.allocator);
+//     defer b.deinit(std.testing.allocator);
 
-    const a = try Self.init(std.testing.allocator, "18.2", null);
-    defer a.deinit(std.testing.allocator);
-    try std.testing.expectEqualSlices(u8, "0182", a.source);
+//     a.add(std.testing.allocator, b);
 
-    const b = try Self.init(std.testing.allocator, "-6.38", null);
-    defer b.deinit(std.testing.allocator);
-    try std.testing.expectEqualSlices(u8, "00638", b.source);
+//     try std.testing.expectEqualSlices(u8, "10", a.source);
+// }
 
-    a.add(std.testing.allocator, b);
+// test "adds two positive decimals" {
+//     const a = try Self.init(std.testing.allocator, "4.2", null);
+//     const b = try Self.init(std.testing.allocator, "6.9", null);
+//     defer a.deinit(std.testing.allocator);
+//     defer b.deinit(std.testing.allocator);
 
-    try std.testing.expectEqualSlices(u8, "01182", a.source);
-    try std.testing.expect(a.positive);
-}
+//     a.add(std.testing.allocator, b);
+
+//     try std.testing.expectEqualSlices(u8, "111", a.source);
+// }
+
+// test "adds two negative integers" {
+//     const a = try Self.init(std.testing.allocator, "-8", null);
+//     const b = try Self.init(std.testing.allocator, "-3", null);
+//     defer a.deinit(std.testing.allocator);
+//     defer b.deinit(std.testing.allocator);
+
+//     a.add(std.testing.allocator, b);
+
+//     try std.testing.expectEqualSlices(u8, "11", a.source);
+//     try std.testing.expect(!a.positive);
+// }
+
+// test "adds two negative decimals" {
+//     const a = try Self.init(std.testing.allocator, "-8.7", null);
+//     const b = try Self.init(std.testing.allocator, "-3.2", null);
+//     defer a.deinit(std.testing.allocator);
+//     defer b.deinit(std.testing.allocator);
+
+//     try std.testing.expectEqual(@as(u32, 2), a.digits);
+//     try std.testing.expectEqual(@as(u32, 1), a.fractional);
+
+//     a.add(std.testing.allocator, b);
+
+//     try std.testing.expectEqual(@as(u32, 3), a.digits);
+//     try std.testing.expectEqual(@as(u32, 1), a.fractional);
+//     try std.testing.expect(!a.positive);
+//     try std.testing.expectEqualSlices(u8, "0119", a.source);
+// }
+
+// test "adds integers of opposite signs" {
+//     const a = try Self.init(std.testing.allocator, "4", null);
+//     const b = try Self.init(std.testing.allocator, "-6", null);
+//     defer a.deinit(std.testing.allocator);
+//     defer b.deinit(std.testing.allocator);
+
+//     a.add(std.testing.allocator, b);
+
+//     try std.testing.expectEqualSlices(u8, "02", a.source);
+//     try std.testing.expect(!a.positive);
+// }
+
+// test "adds decimals of opposite signs" {
+//     const a = try Self.init(std.testing.allocator, "18.2", null);
+//     defer a.deinit(std.testing.allocator);
+//     try std.testing.expectEqualSlices(u8, "0182", a.source);
+
+//     const b = try Self.init(std.testing.allocator, "-6.38", null);
+//     defer b.deinit(std.testing.allocator);
+//     try std.testing.expectEqualSlices(u8, "00638", b.source);
+
+//     a.add(std.testing.allocator, b);
+
+//     try std.testing.expectEqualSlices(u8, "01182", a.source);
+//     try std.testing.expect(a.positive);
+// }
+
+// test "adding multiple times" {
+//     std.testing.log_level = .debug;
+//     std.log.info("", .{});
+
+//     var sum = try Self.init(std.testing.allocator, "0", null);
+//     defer sum.deinit(std.testing.allocator);
+//     const a = try Self.init(std.testing.allocator, "1", null);
+//     defer a.deinit(std.testing.allocator);
+
+//     sum.add(std.testing.allocator, a);
+//     try std.testing.expect(sum.digits == 2);
+
+//     sum.add(std.testing.allocator, a);
+//     try std.testing.expect(sum.digits == 2);
+
+//     sum.add(std.testing.allocator, a);
+//     try std.testing.expect(sum.digits == 2);
+
+//     std.log.info("source = {d}", .{sum.source});
+//     try std.testing.expectEqualSlices(u8, "03", sum.source);
+// }
+
