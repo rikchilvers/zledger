@@ -183,7 +183,10 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     allocator.destroy(self);
 }
 
-pub fn accommodate(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
+// Expand the Decimal so that it has at least nDigit digits and nFractional digits.
+// This function expects that the decimal has been formatted to remove all non-digit characters.
+// Returns the number of unused characters at the start of the source.
+pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigits: u32, nFractional: u32) void {
     // Skip over zeroes
     var available: usize = 0;
     while (available < std.mem.len(self.source)) : (available += 1) {
@@ -191,61 +194,54 @@ pub fn accommodate(self: *Self, allocator: std.mem.Allocator, other: *Self) void
     }
 
     // We do this calculation because the number of digits might have drifted out
-    // FIXME: could this come at the end of add?
-    const selfInt = @intCast(u32, std.mem.len(self.source)) - @intCast(u32, available) - self.fractional;
-    const otherInt = other.digits - other.fractional;
-    const addInt = if (selfInt >= otherInt) 0 else otherInt - selfInt;
-    const addDec = if (self.fractional >= other.fractional) 0 else other.fractional - self.fractional;
+    self.digits = @intCast(u32, std.mem.len(self.source)) - @intCast(u32, available);
 
-    std.log.info("     self {d}", .{self.source});
-    std.log.info("available {d}", .{available});
-    std.log.info("     self {d}.{d}", .{ selfInt, self.fractional });
-    std.log.info("      add {d}.{d}", .{ addInt, addDec });
+    if (self.digits >= nDigits and self.fractional >= nFractional) return;
 
-    if (available >= addDec + addInt + 1) {
-        std.log.info("no allocation required", .{});
-        defer std.log.info("self {d}.{d}", .{ self.digits - self.fractional, self.fractional });
+    const addDigits = nDigits - self.digits;
+    const addFrac = if (self.fractional >= nFractional) 0 else nFractional - self.fractional;
+    const addInt = addDigits - addFrac;
 
-        if (addDec == 0) {
+    if (available >= addFrac + addInt) {
+        if (addFrac == 0) {
             // If there are no additional decimal digits, we don't need to move anything around:
             // we can just tell self that some of the available space is now used.
-            self.digits = self.fractional + selfInt + addInt + 1;
+            self.digits += addInt;
             return;
         }
 
-        var scratch = [_]u8{'0'} ** MaxCharacters;
         // TODO: check we won't overflow this
+        var scratch = [_]u8{'0'} ** MaxCharacters;
 
         // Copy all significant digits (i.e. not any preceding unused characters) from source into scratch, making space for additional fractional.
-        std.mem.copy(u8, scratch[available - addDec ..], self.source[available..]);
+        std.mem.copy(u8, scratch[available - addFrac ..], self.source[available..]);
 
         // Update self.source
         std.mem.copy(u8, self.source[0..], scratch[0..std.mem.len(self.source)]);
-        self.digits = selfInt + addInt + addDec + 1;
-        self.fractional += addDec;
+        self.digits += addInt + addFrac;
+        self.fractional += addFrac;
     } else {
-        const size = selfInt + addInt + self.fractional + addDec + 1;
-        std.log.info("allocation size required: {d}", .{size});
+        const size = self.digits + addInt + addFrac;
         var scratch = allocator.alloc(u8, size) catch unreachable;
 
         if (addInt > 0) {
             // [---314159]
-            std.mem.copy(u8, scratch[addInt + 1 ..], self.source[available..]);
+            std.mem.copy(u8, scratch[addInt..], self.source[available..]);
             // [00031459]
-            std.mem.set(u8, scratch[0 .. addInt + 1], '0');
+            std.mem.set(u8, scratch[0..addInt], '0');
 
-            self.digits += addInt + 1;
+            self.digits += addInt;
         } else {
             // [314159??]
             std.mem.copy(u8, scratch[0..], self.source);
         }
 
-        if (addDec > 0) {
+        if (addFrac > 0) {
             // [314159000]
             std.mem.set(u8, scratch[size - 1 ..], '0');
 
-            self.digits += addDec;
-            self.fractional += addDec;
+            self.digits += addFrac;
+            self.fractional += addFrac;
         }
 
         if (self.ownedSource) allocator.free(self.source);
@@ -257,7 +253,7 @@ pub fn accommodate(self: *Self, allocator: std.mem.Allocator, other: *Self) void
 // Expand the Decimal so that it has at least nDigit digits and nFractional digits.
 // This function expects that the decimal has been formatted to remove all non-digit characters.
 // Returns the number of unused characters at the start of the source.
-pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractional: u32) u32 {
+pub fn oldExpand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractional: u32) u32 {
     std.debug.assert(nDigit >= self.digits);
 
     std.log.info("expanding {d} to {d}:{d}", .{ self.source, nDigit, nFractional });
@@ -266,7 +262,6 @@ pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractiona
     while (available < std.mem.len(self.source)) : (available += 1) {
         if (self.source[available] != '0') break;
     }
-    // const available = std.mem.len(self.source) - self.digits;
 
     std.log.info("\t{d} available", .{available});
     const additionalDigits = nDigit - self.digits;
@@ -356,7 +351,7 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
     //
     // FIXME: instead of having expand pass back the space, we could just do len - digits
     std.log.info(">> expand self", .{});
-    const available = self.expand(allocator, totalDigits, fractionalDigits);
+    const available = self.oldExpand(allocator, totalDigits, fractionalDigits);
 
     // FIXME: I don't think this is the correct adjustment. Maybe just while over the zeroes?
     const otherAvailable = std.mem.len(other.source) - other.digits;
@@ -512,184 +507,158 @@ test "error on mixed thousand-marks" {
 }
 
 test "expand (local): no change" {
-    var s = "0031,415.92".*; // dereference the pointer to the array
-    //       00003141592
-    const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
-    defer d.deinit(std.testing.allocator);
+    var s = "003,141.59".*;
+    const a = try Self.initAndFormat(std.testing.allocator, &s, null);
+    defer a.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(u32, 7), d.digits);
-    try std.testing.expectEqual(@as(u32, 2), d.fractional);
-    try std.testing.expectEqualSlices(u8, "00003141592", &s);
+    try std.testing.expectEqual(@as(u32, 6), a.digits);
+    try std.testing.expectEqual(@as(u32, 2), a.fractional);
+    try std.testing.expectEqualSlices(u8, "0000314159", &s);
 
-    const spareChars = d.expand(std.testing.allocator, 7, 2);
+    a.expand(std.testing.allocator, 7, 2);
     // should be no change to source during this expand
-    try std.testing.expectEqualSlices(u8, "00003141592", &s);
-    try std.testing.expectEqual(@as(u32, 4), spareChars);
+    try std.testing.expectEqualSlices(u8, "0000314159", &s);
 }
 
 test "expand (local): additional integers" {
-    var s = "0031,415.92".*; // dereference the pointer to the array
-    //       00003141592
-    const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
-    defer d.deinit(std.testing.allocator);
+    var s = "0015.92".*;
+    const a = try Self.initAndFormat(std.testing.allocator, &s, null);
+    defer a.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(u32, 7), d.digits);
-    try std.testing.expectEqual(@as(u32, 2), d.fractional);
-    try std.testing.expectEqualSlices(u8, "00003141592", &s);
+    try std.testing.expectEqual(@as(u32, 4), a.digits);
+    try std.testing.expectEqual(@as(u32, 2), a.fractional);
+    try std.testing.expectEqualSlices(u8, "0001592", &s);
 
-    const spareChars = d.expand(std.testing.allocator, 9, 2);
+    a.expand(std.testing.allocator, 6, 2);
     // should be no change to source during this expand
-    try std.testing.expectEqualSlices(u8, "00003141592", &s);
-    try std.testing.expectEqual(@as(u32, 2), spareChars);
+    try std.testing.expectEqualSlices(u8, "0001592", &s);
 }
 
 test "expand (local): additional fractional" {
-    var s = "0031,415.92".*; // dereference the pointer to the array
-    //       00003141592
-    const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
-    defer d.deinit(std.testing.allocator);
+    var s = "001.92".*;
+    const a = try Self.initAndFormat(std.testing.allocator, &s, null);
+    defer a.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(u32, 7), d.digits);
-    try std.testing.expectEqual(@as(u32, 2), d.fractional);
-    try std.testing.expectEqualSlices(u8, "00003141592", &s);
+    try std.testing.expectEqual(@as(u32, 3), a.digits);
+    try std.testing.expectEqual(@as(u32, 2), a.fractional);
+    try std.testing.expectEqualSlices(u8, "000192", a.source);
 
-    const spareChars = d.expand(std.testing.allocator, 8, 3);
-    try std.testing.expectEqualSlices(u8, "00031415920", &s);
-    try std.testing.expectEqual(@as(u32, 3), spareChars);
+    a.expand(std.testing.allocator, 5, 3);
+    try std.testing.expectEqualSlices(u8, "001920", &s);
 }
 
 test "expand (local): additional integers and additional fractional" {
-    var s = "0031,415.92".*; // dereference the pointer to the array
-    //       00003141592
-    const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
-    defer d.deinit(std.testing.allocator);
+    // We dereference the pointer to the array then pass by reference to get a slice
+    var s = "001,215.92".*;
 
-    try std.testing.expectEqual(@as(u32, 7), d.digits);
-    try std.testing.expectEqual(@as(u32, 2), d.fractional);
-    try std.testing.expectEqualSlices(u8, "00003141592", &s);
+    const a = try Self.initAndFormat(std.testing.allocator, &s, null);
+    defer a.deinit(std.testing.allocator);
 
-    const spareChars = d.expand(std.testing.allocator, 9, 3);
-    try std.testing.expectEqualSlices(u8, "00031415920", &s);
-    try std.testing.expectEqual(@as(u32, 2), spareChars);
+    try std.testing.expectEqual(@as(u32, 6), a.digits);
+    try std.testing.expectEqual(@as(u32, 2), a.fractional);
+    try std.testing.expectEqualSlices(u8, "0000121592", &s);
+
+    a.expand(std.testing.allocator, 8, 3);
+    try std.testing.expectEqualSlices(u8, "0001215920", &s);
+}
+
+test "expand (local): multiple expands" {
+    var a = try Self.init(std.testing.allocator, "003", null);
+    defer a.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 1), a.digits);
+    try std.testing.expectEqual(@as(u32, 0), a.fractional);
+
+    std.log.info(">> expand", .{});
+    a.expand(std.testing.allocator, 3, 0);
+
+    try std.testing.expectEqualSlices(u8, "003", a.source);
+    try std.testing.expectEqual(@as(u32, 3), a.digits);
+    try std.testing.expectEqual(@as(u32, 0), a.fractional);
+
+    std.log.info(">> expand", .{});
+    a.expand(std.testing.allocator, 3, 0);
+
+    try std.testing.expectEqualSlices(u8, "003", a.source);
+    try std.testing.expectEqual(@as(u32, 3), a.digits);
+    try std.testing.expectEqual(@as(u32, 0), a.fractional);
+
+    std.log.info(">> expand", .{});
+    a.expand(std.testing.allocator, 3, 0);
+
+    try std.testing.expectEqualSlices(u8, "003", a.source);
+    try std.testing.expectEqual(@as(u32, 3), a.digits);
+    try std.testing.expectEqual(@as(u32, 0), a.fractional);
 }
 
 test "expand (alloc): no change" {
-    const d = try Self.init(std.testing.allocator, "0031,415.92", null);
-    defer d.deinit(std.testing.allocator);
+    const a = try Self.init(std.testing.allocator, "003,115.92", null);
+    defer a.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(u32, 7), d.digits);
-    try std.testing.expectEqual(@as(u32, 2), d.fractional);
-    try std.testing.expectEqualSlices(u8, "00003141592", d.source);
+    try std.testing.expectEqual(@as(u32, 6), a.digits);
+    try std.testing.expectEqual(@as(u32, 2), a.fractional);
+    try std.testing.expectEqualSlices(u8, "0000311592", a.source);
 
-    const spareChars = d.expand(std.testing.allocator, 7, 2);
+    a.expand(std.testing.allocator, 2, 1);
     // should be no change to source during this expand
-    try std.testing.expectEqualSlices(u8, "00003141592", d.source);
-    try std.testing.expectEqual(@as(u32, 4), spareChars);
+    try std.testing.expectEqualSlices(u8, "0000311592", a.source);
 }
 
 test "expand (alloc): additional integers" {
-    const d = try Self.init(std.testing.allocator, "3", null);
-    defer d.deinit(std.testing.allocator);
+    const a = try Self.init(std.testing.allocator, "3", null);
+    defer a.deinit(std.testing.allocator);
 
-    const spareChars = d.expand(std.testing.allocator, 2, 0);
-    try std.testing.expectEqual(@as(u32, 0), spareChars);
+    a.expand(std.testing.allocator, 3, 0);
 
-    try std.testing.expectEqualSlices(u8, "03", d.source);
+    try std.testing.expectEqualSlices(u8, "003", a.source);
 }
 
 test "expand (alloc): additional fractional" {
-    const d = try Self.init(std.testing.allocator, "3.1", null);
-    defer d.deinit(std.testing.allocator);
+    const a = try Self.init(std.testing.allocator, "3.1", null);
+    defer a.deinit(std.testing.allocator);
 
-    const spareChars = d.expand(std.testing.allocator, 3, 2);
-    try std.testing.expectEqual(@as(u32, 0), spareChars);
+    a.expand(std.testing.allocator, 4, 2);
 
-    try std.testing.expectEqualSlices(u8, "310", d.source);
+    try std.testing.expectEqualSlices(u8, "0310", a.source);
 }
 
 test "expand (alloc): additional integers and additional fractional" {
-    const d = try Self.init(std.testing.allocator, "0031,415.92", null);
-    defer d.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(u32, 7), d.digits);
-    try std.testing.expectEqual(@as(u32, 2), d.fractional);
-    try std.testing.expectEqualSlices(u8, "00003141592", d.source);
-
-    const spareChars = d.expand(std.testing.allocator, 9, 3);
-    try std.testing.expectEqualSlices(u8, "00031415920", d.source);
-    try std.testing.expectEqual(@as(u32, 2), spareChars);
-}
-
-test "accommodate: no allocations" {
-    // std.testing.log_level = .debug;
-    std.log.info("", .{});
-
-    var a = try Self.init(std.testing.allocator, "003", null);
+    const a = try Self.init(std.testing.allocator, "5.92", null);
     defer a.deinit(std.testing.allocator);
-    var b = try Self.init(std.testing.allocator, "010", null);
-    defer b.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(u32, 1), a.digits);
-    try std.testing.expectEqual(@as(u32, 0), a.fractional);
-
-    try std.testing.expectEqual(@as(u32, 2), b.digits);
-    try std.testing.expectEqual(@as(u32, 0), b.fractional);
-
-    std.log.info(">> accommodate", .{});
-    a.accommodate(std.testing.allocator, b);
-
-    try std.testing.expectEqualSlices(u8, "003", a.source);
     try std.testing.expectEqual(@as(u32, 3), a.digits);
-    try std.testing.expectEqual(@as(u32, 0), a.fractional);
+    try std.testing.expectEqual(@as(u32, 2), a.fractional);
+    try std.testing.expectEqualSlices(u8, "0592", a.source);
 
-    std.log.info(">> accommodate", .{});
-    a.accommodate(std.testing.allocator, b);
-
-    try std.testing.expectEqualSlices(u8, "003", a.source);
-    try std.testing.expectEqual(@as(u32, 3), a.digits);
-    try std.testing.expectEqual(@as(u32, 0), a.fractional);
-
-    std.log.info(">> accommodate", .{});
-    a.accommodate(std.testing.allocator, b);
-
-    try std.testing.expectEqualSlices(u8, "003", a.source);
-    try std.testing.expectEqual(@as(u32, 3), a.digits);
-    try std.testing.expectEqual(@as(u32, 0), a.fractional);
+    a.expand(std.testing.allocator, 6, 3);
+    try std.testing.expectEqualSlices(u8, "005920", a.source);
 }
 
-test "accommodate: allocations" {
-    std.testing.log_level = .debug;
-    std.log.info("", .{});
-
+test "expand (alloc): multiple expands" {
     var a = try Self.init(std.testing.allocator, "3", null);
     defer a.deinit(std.testing.allocator);
-    var b = try Self.init(std.testing.allocator, "010", null);
-    defer b.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 1), a.digits);
     try std.testing.expectEqual(@as(u32, 0), a.fractional);
 
-    try std.testing.expectEqual(@as(u32, 2), b.digits);
-    try std.testing.expectEqual(@as(u32, 0), b.fractional);
-
-    std.log.info(">> accommodate", .{});
-    a.accommodate(std.testing.allocator, b);
+    std.log.info(">> expand", .{});
+    a.expand(std.testing.allocator, 3, 0);
     std.log.info(">> source = {d}", .{a.source});
 
     try std.testing.expectEqualSlices(u8, "003", a.source);
     try std.testing.expectEqual(@as(u32, 3), a.digits);
     try std.testing.expectEqual(@as(u32, 0), a.fractional);
 
-    std.log.info(">> accommodate", .{});
-    a.accommodate(std.testing.allocator, b);
+    std.log.info(">> expand", .{});
+    a.expand(std.testing.allocator, 3, 0);
     std.log.info(">> source = {d}", .{a.source});
 
     try std.testing.expectEqualSlices(u8, "003", a.source);
     try std.testing.expectEqual(@as(u32, 3), a.digits);
     try std.testing.expectEqual(@as(u32, 0), a.fractional);
 
-    std.log.info(">> accommodate", .{});
-    a.accommodate(std.testing.allocator, b);
+    std.log.info(">> expand", .{});
+    a.expand(std.testing.allocator, 3, 0);
     std.log.info(">> source = {d}", .{a.source});
 
     try std.testing.expectEqualSlices(u8, "003", a.source);
