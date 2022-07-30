@@ -254,83 +254,39 @@ pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigits: u32, nFraction
     }
 }
 
-// Expand the Decimal so that it has at least nDigit digits and nFractional digits.
-// This function expects that the decimal has been formatted to remove all non-digit characters.
-// Returns the number of unused characters at the start of the source.
-pub fn oldExpand(self: *Self, allocator: std.mem.Allocator, nDigit: u32, nFractional: u32) u32 {
-    std.debug.assert(nDigit >= self.digits);
+fn loopTest(a: []u8, b: []u8) void {
+    std.log.info("", .{});
+    std.log.info("loop on {s} and {s}", .{ a, b });
 
-    std.log.info("expanding {d} to {d}:{d}", .{ self.source, nDigit, nFractional });
+    // We're going to work backwards through the sources, so start at the end of both
+    var i = std.mem.len(a) - 1;
+    var j = std.mem.len(b) - 1;
+    var iComplete = false;
+    var jComplete = false;
 
-    var available: usize = 0;
-    while (available < std.mem.len(self.source)) : (available += 1) {
-        if (self.source[available] != '0') break;
-    }
+    while (true) {
+        if (iComplete and jComplete) break;
 
-    std.log.info("\t{d} available", .{available});
-    const additionalDigits = nDigit - self.digits;
-    const additionalFractional = nFractional - self.fractional;
-    const additionalInteger = additionalDigits - additionalFractional;
+        var lhs = a[i];
+        var rhs = b[j];
 
-    std.log.info("+D = {d}\t+F = {d}\t\t+I = {d}", .{
-        additionalDigits,
-        additionalFractional,
-        additionalInteger,
-    });
-
-    if (additionalDigits == 0) return @intCast(u32, available);
-
-    // NOTE: During reallocation, sqlite3 adds 1 to how many chars are required in source. Why?
-    //       See sqlite/ext/misc/decimal.c:381
-    if (available >= additionalDigits) {
-        std.log.info("\thave enough available", .{});
-        // If we have space and there are no additional fractional digits, we can return now
-        if (additionalFractional == 0) {
-            self.digits += additionalInteger;
-            return @intCast(u32, available - additionalDigits);
-        }
-
-        var scratch = [_]u8{'0'} ** MaxCharacters;
-        // TODO: add check that we won't go beyond this
-
-        // Copy all significant digits (i.e. not any preceding unused characters) from source into scratch, making space for additional fractional.
-        std.mem.copy(u8, scratch[available - additionalFractional ..], self.source[available..]);
-
-        // self.digits += additionalInteger;
-        self.fractional += additionalFractional;
-
-        // Update self.source
-        std.mem.copy(u8, self.source[0..], scratch[0..std.mem.len(self.source)]);
-
-        return @intCast(u32, available - additionalDigits);
-    } else {
-        var scratch = allocator.alloc(u8, nDigit) catch unreachable;
-
-        if (additionalInteger > 0) {
-            // [---314159]
-            std.mem.copy(u8, scratch[additionalInteger..], self.source[available..]);
-            // [00031459]
-            std.mem.set(u8, scratch[0..additionalInteger], '0');
-
-            self.digits += additionalInteger;
+        if (i > 0) {
+            i -= 1;
+        } else if (iComplete) {
+            lhs = '0';
         } else {
-            // [314159??]
-            std.mem.copy(u8, scratch[0..std.mem.len(self.source)], self.source);
+            iComplete = true;
         }
 
-        if (additionalFractional > 0) {
-            // [314159000]
-            std.mem.set(u8, scratch[nDigit - 1 ..], '0');
-
-            self.digits += additionalFractional;
-            self.fractional += additionalFractional;
+        if (j > 0) {
+            j -= 1;
+        } else if (jComplete) {
+            rhs = '0';
+        } else {
+            jComplete = true;
         }
 
-        if (self.ownedSource) allocator.free(self.source);
-        self.source = scratch;
-        self.ownedSource = true;
-
-        return 0;
+        std.log.info("Do a thing with {d} and {d}", .{ lhs - 48, rhs - 48 });
     }
 }
 
@@ -341,8 +297,6 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
 
     var integerDigits = self.digits - self.fractional;
     var otherIntegers = other.digits - other.fractional;
-    // if (integerDigits > 0 and self.source[0] == 0) integerDigits -= 1;
-    // if (otherIntegers > 0 and other.source[0] == 0) otherIntegers -= 1;
     if (integerDigits < otherIntegers) integerDigits = otherIntegers;
 
     var fractionalDigits = self.fractional;
@@ -350,12 +304,9 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
 
     const totalDigits = integerDigits + fractionalDigits + 1;
 
-    // Self and other might have padding zeroes as a result of formatting while they were being parsed.
-    // To compare them later, we need to skip these.
-    //
-    // FIXME: instead of having expand pass back the space, we could just do len - digits
     std.log.info(">> expand self", .{});
-    const available = self.oldExpand(allocator, totalDigits, fractionalDigits);
+    // We +1 here because we might need an additional place value column to overflow into.
+    const available = self.expand(allocator, integerDigits + fractionalDigits + 1, fractionalDigits);
 
     // FIXME: I don't think this is the correct adjustment. Maybe just while over the zeroes?
     const otherAvailable = std.mem.len(other.source) - other.digits;
@@ -479,11 +430,11 @@ test "parses decimals with comma as decimal separator" {
 
 test "parses decimals with thousand separators" {
     var ri = RenderingInformation{};
-    const d = try Self.init(std.testing.allocator, "3,141,592.65", &ri);
+    const d = try Self.init(std.testing.allocator, "3,141,592.650", &ri);
     defer d.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(u32, 9), d.digits);
-    try std.testing.expectEqual(@as(u32, 2), d.fractional);
+    try std.testing.expectEqual(@as(u32, 10), d.digits);
+    try std.testing.expectEqual(@as(u32, 3), d.fractional);
 
     try std.testing.expectEqual(@as(u8, ','), ri.thousandMark);
     try std.testing.expectEqual(@as(u8, '.'), ri.decimalSeparator);
@@ -674,6 +625,20 @@ test "expand (alloc): multiple expands" {
     try std.testing.expectEqual(@as(u32, 3), a.digits);
     try std.testing.expectEqual(@as(u32, 0), a.fractional);
     try std.testing.expectEqual(@as(u32, 0), available);
+}
+
+test "loop test" {
+    std.testing.log_level = .debug;
+
+    const a = try Self.init(std.testing.allocator, "003,115.92", null);
+    defer a.deinit(std.testing.allocator);
+
+    const b = try Self.init(std.testing.allocator, "11592", null);
+    defer b.deinit(std.testing.allocator);
+
+    const available = a.expand(std.testing.allocator, 6 + 1, 2);
+
+    loopTest(a.source[available..], b.source);
 }
 
 // test "adds two positive integers" {
