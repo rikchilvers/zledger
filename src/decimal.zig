@@ -18,13 +18,13 @@ source: []u8,
 /// Whether the source was allocated by Self
 ownedSource: bool,
 
-pub const RenderingInformation = struct {
+pub const Style = struct {
     thousandMark: u8 = 0, // e.g. 24,000
     decimalSeparator: u8 = 0, // e.g. 3.141
 };
 
 /// Initialises the Decimal along with space for its source
-pub fn initAlloc(allocator: std.mem.Allocator, number: []const u8, renderingInformation: ?*RenderingInformation) !*Self {
+pub fn initAlloc(allocator: std.mem.Allocator, number: []const u8, style: ?*Style) !*Self {
     var self = allocator.create(Self) catch unreachable;
     errdefer allocator.destroy(self);
 
@@ -38,15 +38,13 @@ pub fn initAlloc(allocator: std.mem.Allocator, number: []const u8, renderingInfo
     self.source = source;
     self.ownedSource = true;
 
-    const ri = try self.parse(true);
-    if (renderingInformation) |info| {
-        info.* = ri;
-    }
+    const renderingStyle = try self.parse(true);
+    if (style) |s| s.* = renderingStyle;
 
     return self;
 }
 
-pub fn init(source: []u8, renderingInformation: ?*RenderingInformation) !Self {
+pub fn init(source: []u8, style: ?*Style) !Self {
     var self: Self = .{
         .positive = true,
         .fractional = 0,
@@ -55,10 +53,8 @@ pub fn init(source: []u8, renderingInformation: ?*RenderingInformation) !Self {
         .ownedSource = false,
     };
 
-    const ri = try self.parse(false);
-    if (renderingInformation) |info| {
-        info.* = ri;
-    }
+    const renderingStyle = try self.parse(false);
+    if (style) |s| s.* = renderingStyle;
 
     return self;
 }
@@ -72,10 +68,11 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 //     1. Parse the sign of the decimal and how many total and fractional digits it has.
 //     2. Identify how to render back if printed.
 //     3. Remove all non-digit characters from the source.
-fn parse(self: *Self, format: bool) !RenderingInformation {
+fn parse(self: *Self, format: bool) !Style {
     _ = format;
 
-    var ri: RenderingInformation = .{
+    // Rendering style
+    var style: Style = .{
         .thousandMark = 0,
         .decimalSeparator = 0,
     };
@@ -114,19 +111,19 @@ fn parse(self: *Self, format: bool) !RenderingInformation {
             '0'...'9' => {
                 self.digits += 1;
 
-                if (ri.decimalSeparator == 0) {
                     tempInteger[iI] = self.source[i];
                     iI += 1;
+                if (style.decimalSeparator == 0) {
                 } else {
                     tempFractional[iF] = self.source[i];
                     iF += 1;
                 }
             },
             ',' => {
-                switch (ri.decimalSeparator) {
+                switch (style.decimalSeparator) {
                     0 => {
                         // treat the first comma as a decimal separator
-                        ri.decimalSeparator = c;
+                        style.decimalSeparator = c;
                         self.fractional = self.digits + 1;
                     },
                     '.' => {
@@ -136,23 +133,23 @@ fn parse(self: *Self, format: bool) !RenderingInformation {
                     else => {},
                 }
 
-                if (ri.thousandMark == '_') return Error.UnexpectedCharacter;
+                if (style.thousandMark == '_') return Error.UnexpectedCharacter;
 
                 if (j > 0 and i - j != 4) return Error.IncorrectThousandMark;
 
                 j = i;
             },
             '_' => {
-                if (ri.thousandMark == ',') return Error.UnexpectedCharacter;
+                if (style.thousandMark == ',') return Error.UnexpectedCharacter;
                 if (j > 0 and i - j != 4) return Error.IncorrectThousandMark;
-                ri.thousandMark = '_';
+                style.thousandMark = '_';
                 j = i;
             },
             '.' => {
                 if (j > 0 and i - j != 4) return Error.IncorrectThousandMark;
 
-                if (ri.decimalSeparator == ',') {
-                    ri.thousandMark = ',';
+                if (style.decimalSeparator == ',') {
+                    style.thousandMark = ',';
                     // Because we previously treated a comma as the decimal separator,
                     // all the fraction digits should now be moved to the integer digits
                     if (iF > 0) {
@@ -162,7 +159,7 @@ fn parse(self: *Self, format: bool) !RenderingInformation {
                     iI += iF;
                     iF = 0;
                 }
-                ri.decimalSeparator = '.';
+                style.decimalSeparator = '.';
 
                 self.fractional = self.digits + 1;
             },
@@ -191,7 +188,7 @@ fn parse(self: *Self, format: bool) !RenderingInformation {
     // We don't need a decimal separator because we know how many fractional digits are in the number.
     std.mem.copy(u8, self.source[padding + iI .. padding + iI + iF], tempFractional[0..iF]);
 
-    return ri;
+    return style;
 }
 
 // Expand the Decimal so that it has at least nDigit digits and nFractional digits.
@@ -499,7 +496,7 @@ test "parses decimals with comma as decimal separator" {
 }
 
 test "parses decimals with thousand separators" {
-    var ri = RenderingInformation{};
+    var ri = Style{};
     const d = try Self.initAlloc(std.testing.allocator, "3,141,592.650", &ri);
     defer d.deinit(std.testing.allocator);
 
