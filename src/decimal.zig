@@ -279,26 +279,36 @@ const SliceIterator = struct {
     pub fn next(self: *SliceIterator, lhsIndex: *?usize, rhsIndex: *?usize) bool {
         if (self.iComplete and self.jComplete) return false;
 
+        lhsIndex.* = self.i;
+        rhsIndex.* = self.j;
+
         if (self.i > 0) {
-            lhsIndex.* = self.i;
             self.i -= 1;
+            if (self.a[self.i] < '0' or self.a[self.i] > '9') {
+                self.i -= 1;
+            }
         } else {
             if (self.iComplete) {
                 lhsIndex.* = null;
             } else {
-                lhsIndex.* = self.i;
                 self.iComplete = true;
             }
         }
 
         if (self.j > 0) {
-            rhsIndex.* = self.j;
             self.j -= 1;
+
+            // The decimal slices that we are given have been parsed before being seen
+            // by this function. That means we can safely assume the final character is not
+            // going to be a non-digit character and therefore we can -1 from the index without
+            // setting ourselves up for an out of bounds error.
+            if (self.b[self.j] < '0' or self.b[self.j] > '9') {
+                self.j -= 1;
+            }
         } else {
             if (self.jComplete) {
                 rhsIndex.* = null;
             } else {
-                rhsIndex.* = self.j;
                 self.jComplete = true;
             }
         }
@@ -665,20 +675,21 @@ test "loop test" {
     const a = try Self.init(std.testing.allocator, "003,115.92", null);
     defer a.deinit(std.testing.allocator);
 
-    const b = try Self.init(std.testing.allocator, "115.9", null);
-    defer b.deinit(std.testing.allocator);
+    // const b = try Self.init(std.testing.allocator, "115.9", null);
+    // defer b.deinit(std.testing.allocator);
 
     const aAvailable = a.expand(std.testing.allocator, 6 + 1, 2);
-    const bAvailable = b.expand(std.testing.allocator, 6 + 1, 2);
+    const bAvailable = 0; //b.expand(std.testing.allocator, 6 + 1, 2);
 
     // loopTest(a.source[aAvailable..], b.source[bAvailable..], do);
-    var iter = SliceIterator.init(a.source[aAvailable..], b.source[bAvailable..]);
+    var c = "115.9".*;
+    var iter = SliceIterator.init(a.source[aAvailable..], &c);
     var x: ?usize = null;
     var y: ?usize = null;
     while (iter.next(&x, &y)) {
         const i = if (x) |xP| a.source[xP + aAvailable] else '0';
-        const j = if (y) |yP| b.source[yP + bAvailable] else '0';
-        std.log.info("Do a thing with {d} and {d}", .{ i - 48, j - 48 });
+        const j = if (y) |yP| c[yP + bAvailable] else '0';
+        std.log.info("Do a thing with {c} and {c}", .{ i, j });
     }
 }
 
