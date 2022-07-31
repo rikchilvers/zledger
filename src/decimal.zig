@@ -254,11 +254,94 @@ pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigits: u32, nFraction
     }
 }
 
-fn loopTest(a: []u8, b: []u8) void {
+const SliceIterator = struct {
+    a: []u8,
+    b: []u8,
+    i: usize,
+    j: usize,
+    iComplete: bool,
+    jComplete: bool,
+
+    pub fn init(a: []u8, b: []u8) SliceIterator {
+        return .{
+            .a = a,
+            .b = b,
+            .i = std.mem.len(a) - 1,
+            .j = std.mem.len(b) - 1,
+            .iComplete = false,
+            .jComplete = false,
+        };
+    }
+
+    // Given that the slices provided might be of different lengths, this iterator
+    // works from back-to-front, setting the passed pointers to the current value
+    // of the indices or null if the start of the slice has been reached.
+    pub fn next(self: *SliceIterator, lhsIndex: *?usize, rhsIndex: *?usize) bool {
+        if (self.iComplete and self.jComplete) return false;
+
+        if (self.i > 0) {
+            lhsIndex.* = self.i;
+            self.i -= 1;
+        } else {
+            if (self.iComplete) {
+                lhsIndex.* = null;
+            } else {
+                lhsIndex.* = self.i;
+                self.iComplete = true;
+            }
+        }
+
+        if (self.j > 0) {
+            rhsIndex.* = self.j;
+            self.j -= 1;
+        } else {
+            if (self.jComplete) {
+                rhsIndex.* = null;
+            } else {
+                rhsIndex.* = self.j;
+                self.jComplete = true;
+            }
+        }
+
+        return true;
+    }
+
+    pub fn nextChar(self: *SliceIterator, x: *?u8, y: *?u8) bool {
+        if (self.iComplete and self.jComplete) return false;
+
+        var lhs: ?u8 = self.a[self.i];
+        var rhs: ?u8 = self.b[self.j];
+
+        if (self.i > 0) {
+            self.i -= 1;
+        } else if (self.iComplete) {
+            lhs = '0';
+        } else {
+            self.iComplete = true;
+            lhs = null;
+        }
+
+        if (self.j > 0) {
+            self.j -= 1;
+        } else if (self.jComplete) {
+            rhs = '0';
+        } else {
+            self.jComplete = true;
+            rhs = null;
+        }
+
+        x.* = lhs;
+        y.* = rhs;
+
+        return true;
+    }
+};
+
+// This function assume that a and b are both valid decimals.
+fn loopTest(a: []u8, b: []u8, callback: fn (lhs: u8, rhs: u8) void) void {
     std.log.info("", .{});
     std.log.info("loop on {s} and {s}", .{ a, b });
 
-    // We're going to work backwards through the sources, so start at the end of both
     var i = std.mem.len(a) - 1;
     var j = std.mem.len(b) - 1;
     var iComplete = false;
@@ -286,7 +369,7 @@ fn loopTest(a: []u8, b: []u8) void {
             jComplete = true;
         }
 
-        std.log.info("Do a thing with {d} and {d}", .{ lhs - 48, rhs - 48 });
+        callback(lhs, rhs);
     }
 }
 
@@ -306,14 +389,24 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
 
     std.log.info(">> expand self", .{});
     // We +1 here because we might need an additional place value column to overflow into.
-    const available = self.expand(allocator, integerDigits + fractionalDigits + 1, fractionalDigits);
+    const available = self.expand(allocator, totalDigits, fractionalDigits);
+    var otherAvailable = 0;
 
-    // FIXME: I don't think this is the correct adjustment. Maybe just while over the zeroes?
-    const otherAvailable = std.mem.len(other.source) - other.digits;
+    // We only expand other if fractional digits are not the same
+    if (fractionalDigits > other.fractional) {
+        otherAvailable = other.expand(allocator, totalDigits, fractionalDigits);
+    }
 
     if (self.positive == other.positive) {
         var carry: u8 = 0;
         var i = totalDigits - 1;
+
+        var a: ?u8 = null;
+        var b: ?u8 = null;
+        var iter = SliceIterator.init(self.source[available..], other.source[otherAvailable..]);
+        while (iter.next(&a, &b)) {
+            std.log.info("Do a thing with {d} and {d}", .{ a, b });
+        }
 
         // We have to shuffle the values around by 48 as this is ASCII for 0.
         while (i >= 0) {
@@ -627,18 +720,32 @@ test "expand (alloc): multiple expands" {
     try std.testing.expectEqual(@as(u32, 0), available);
 }
 
+fn do(lhs: u8, rhs: u8) void {
+    std.log.info("Do a thing with {d} and {d}", .{ lhs - 48, rhs - 48 });
+}
+
 test "loop test" {
     std.testing.log_level = .debug;
+    std.log.info("", .{});
 
     const a = try Self.init(std.testing.allocator, "003,115.92", null);
     defer a.deinit(std.testing.allocator);
 
-    const b = try Self.init(std.testing.allocator, "11592", null);
+    const b = try Self.init(std.testing.allocator, "115.9", null);
     defer b.deinit(std.testing.allocator);
 
-    const available = a.expand(std.testing.allocator, 6 + 1, 2);
+    const aAvailable = a.expand(std.testing.allocator, 6 + 1, 2);
+    const bAvailable = b.expand(std.testing.allocator, 6 + 1, 2);
 
-    loopTest(a.source[available..], b.source);
+    // loopTest(a.source[aAvailable..], b.source[bAvailable..], do);
+    var iter = SliceIterator.init(a.source[aAvailable..], b.source[bAvailable..]);
+    var x: ?usize = null;
+    var y: ?usize = null;
+    while (iter.next(&x, &y)) {
+        const i = if (x) |xP| a.source[xP + aAvailable] else '0';
+        const j = if (y) |yP| b.source[yP + bAvailable] else '0';
+        std.log.info("Do a thing with {d} and {d}", .{ i - 48, j - 48 });
+    }
 }
 
 // test "adds two positive integers" {
