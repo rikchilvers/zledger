@@ -261,8 +261,10 @@ const SliceIterator = struct {
     j: usize,
     iComplete: bool,
     jComplete: bool,
+    fractionalDifference: i8,
 
-    pub fn init(a: []u8, b: []u8) SliceIterator {
+    // The fractionalDifference is a.fractional - b.fractional
+    pub fn init(a: []u8, b: []u8, fractionalDifference: i8) SliceIterator {
         return .{
             .a = a,
             .b = b,
@@ -270,50 +272,71 @@ const SliceIterator = struct {
             .j = std.mem.len(b) - 1,
             .iComplete = false,
             .jComplete = false,
+            .fractionalDifference = fractionalDifference,
         };
     }
 
     // Given that the slices provided might be of different lengths, this iterator
     // works from back-to-front, setting the passed pointers to the current value
-    // of the indices or null if the start of the slice has been reached.
+    // of the indices or null if there is no digit in that place value.
     pub fn next(self: *SliceIterator, lhsIndex: *?usize, rhsIndex: *?usize) bool {
-        if (self.iComplete and self.jComplete) return false;
+        // First, we handle a and b having different numbers of fractional digits.
+        // If they are unequal, we only take a digit from the slice that has more.
+        if (self.fractionalDifference > 0) {
+            // self.a has more fractional digits than self.b
+            lhsIndex.* = self.i;
+            rhsIndex.* = null;
+            self.fractionalDifference -= 1;
+        } else if (self.fractionalDifference < 0) {
+            // self.b has more fractional digits than self.a
+            lhsIndex.* = null;
+            rhsIndex.* = self.j;
+            self.fractionalDifference += 1;
+        } else {
+            lhsIndex.* = self.i;
+            rhsIndex.* = self.j;
+        }
 
-        lhsIndex.* = self.i;
-        rhsIndex.* = self.j;
-
-        if (self.i > 0) {
-            self.i -= 1;
-            if (self.a[self.i] < '0' or self.a[self.i] > '9') {
+        // If the fractionalDifference is > 0, a has more fractional digits than b.
+        // That means we can only advance a.
+        if (self.fractionalDifference >= 0) {
+            if (self.i > 0) {
                 self.i -= 1;
-            }
-        } else {
-            if (self.iComplete) {
-                lhsIndex.* = null;
+                if (self.a[self.i] < '0' or self.a[self.i] > '9') {
+                    self.i -= 1;
+                }
             } else {
-                self.iComplete = true;
+                if (self.iComplete) {
+                    lhsIndex.* = null;
+                } else {
+                    self.iComplete = true;
+                }
             }
         }
 
-        if (self.j > 0) {
-            self.j -= 1;
-
-            // The decimal slices that we are given have been parsed before being seen
-            // by this function. That means we can safely assume the final character is not
-            // going to be a non-digit character and therefore we can -1 from the index without
-            // setting ourselves up for an out of bounds error.
-            if (self.b[self.j] < '0' or self.b[self.j] > '9') {
+        // If the fractionDifference is < 0, b has more fractional digits than a.
+        // That means we can only advance b.
+        if (self.fractionalDifference <= 0) {
+            if (self.j > 0) {
                 self.j -= 1;
-            }
-        } else {
-            if (self.jComplete) {
-                rhsIndex.* = null;
+
+                // The decimal slices that we are given have been parsed before being seen
+                // by this function. That means we can safely assume the final character is not
+                // going to be a non-digit character and therefore we can -1 from the index without
+                // setting ourselves up for an out of bounds error.
+                if (self.b[self.j] < '0' or self.b[self.j] > '9') {
+                    self.j -= 1;
+                }
             } else {
-                self.jComplete = true;
+                if (self.jComplete) {
+                    rhsIndex.* = null;
+                } else {
+                    self.jComplete = true;
+                }
             }
         }
 
-        return true;
+        return if (self.iComplete and self.jComplete) false else true;
     }
 };
 
@@ -672,7 +695,7 @@ test "loop test" {
     std.testing.log_level = .debug;
     std.log.info("", .{});
 
-    const a = try Self.init(std.testing.allocator, "003,115.92", null);
+    const a = try Self.init(std.testing.allocator, "003,115.9", null);
     defer a.deinit(std.testing.allocator);
 
     // const b = try Self.init(std.testing.allocator, "115.9", null);
@@ -682,8 +705,8 @@ test "loop test" {
     const bAvailable = 0; //b.expand(std.testing.allocator, 6 + 1, 2);
 
     // loopTest(a.source[aAvailable..], b.source[bAvailable..], do);
-    var c = "115.9".*;
-    var iter = SliceIterator.init(a.source[aAvailable..], &c);
+    var c = "115.92".*;
+    var iter = SliceIterator.init(a.source[aAvailable..], &c, 1 - 2);
     var x: ?usize = null;
     var y: ?usize = null;
     while (iter.next(&x, &y)) {
