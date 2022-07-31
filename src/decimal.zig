@@ -305,73 +305,7 @@ const SliceIterator = struct {
 
         return true;
     }
-
-    pub fn nextChar(self: *SliceIterator, x: *?u8, y: *?u8) bool {
-        if (self.iComplete and self.jComplete) return false;
-
-        var lhs: ?u8 = self.a[self.i];
-        var rhs: ?u8 = self.b[self.j];
-
-        if (self.i > 0) {
-            self.i -= 1;
-        } else if (self.iComplete) {
-            lhs = '0';
-        } else {
-            self.iComplete = true;
-            lhs = null;
-        }
-
-        if (self.j > 0) {
-            self.j -= 1;
-        } else if (self.jComplete) {
-            rhs = '0';
-        } else {
-            self.jComplete = true;
-            rhs = null;
-        }
-
-        x.* = lhs;
-        y.* = rhs;
-
-        return true;
-    }
 };
-
-// This function assume that a and b are both valid decimals.
-fn loopTest(a: []u8, b: []u8, callback: fn (lhs: u8, rhs: u8) void) void {
-    std.log.info("", .{});
-    std.log.info("loop on {s} and {s}", .{ a, b });
-
-    var i = std.mem.len(a) - 1;
-    var j = std.mem.len(b) - 1;
-    var iComplete = false;
-    var jComplete = false;
-
-    while (true) {
-        if (iComplete and jComplete) break;
-
-        var lhs = a[i];
-        var rhs = b[j];
-
-        if (i > 0) {
-            i -= 1;
-        } else if (iComplete) {
-            lhs = '0';
-        } else {
-            iComplete = true;
-        }
-
-        if (j > 0) {
-            j -= 1;
-        } else if (jComplete) {
-            rhs = '0';
-        } else {
-            jComplete = true;
-        }
-
-        callback(lhs, rhs);
-    }
-}
 
 // Adds the value of other into self.
 // Both self and other might be reallocated to new memory by this function.
