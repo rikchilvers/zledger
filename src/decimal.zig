@@ -23,23 +23,62 @@ pub const RenderingInformation = struct {
     decimalSeparator: u8 = 0, // e.g. 3.141
 };
 
-// This function does 3 different jobs.
-//     1. Parse whether the sign of the decimal and how many total digits and fractional digits it has.
+/// Initialises the Decimal along with space for its source
+pub fn initAlloc(allocator: std.mem.Allocator, number: []const u8, renderingInformation: ?*RenderingInformation) !*Self {
+    var self = allocator.create(Self) catch unreachable;
+    errdefer allocator.destroy(self);
+
+    var source = allocator.alloc(u8, std.mem.len(number)) catch unreachable;
+    std.mem.copy(u8, source, number);
+    errdefer allocator.free(source);
+
+    self.positive = true;
+    self.fractional = 0;
+    self.digits = 0;
+    self.source = source;
+    self.ownedSource = true;
+
+    const ri = try self.parse(true);
+    if (renderingInformation) |info| {
+        info.* = ri;
+    }
+
+    return self;
+}
+
+pub fn init(source: []u8, renderingInformation: ?*RenderingInformation) !Self {
+    var self: Self = .{
+        .positive = true,
+        .fractional = 0,
+        .digits = 0,
+        .source = source,
+        .ownedSource = false,
+    };
+
+    const ri = try self.parse(false);
+    if (renderingInformation) |info| {
+        info.* = ri;
+    }
+
+    return self;
+}
+
+pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    if (self.ownedSource) allocator.free(self.source);
+    allocator.destroy(self);
+}
+
+// This function does 3 things:
+//     1. Parse the sign of the decimal and how many total and fractional digits it has.
 //     2. Identify how to render back if printed.
 //     3. Remove all non-digit characters from the source.
-pub fn initAndFormat(allocator: std.mem.Allocator, source: []u8, renderingInformation: ?*RenderingInformation) !*Self {
-    var decimal = allocator.create(Self) catch unreachable;
-    errdefer allocator.destroy(decimal);
+fn parse(self: *Self, format: bool) !RenderingInformation {
+    _ = format;
 
-    decimal.positive = true;
-    decimal.fractional = 0;
-    decimal.digits = 0;
-    decimal.source = source;
-    decimal.ownedSource = false;
-
-    // Temporary storage of rendering information.
-    var thousandMark: u8 = 0;
-    var decimalSeparator: u8 = 0;
+    var ri: RenderingInformation = .{
+        .thousandMark = 0,
+        .decimalSeparator = 0,
+    };
 
     // Index into the source
     var i: usize = 0;
@@ -48,7 +87,7 @@ pub fn initAndFormat(allocator: std.mem.Allocator, source: []u8, renderingInform
 
     // We use two 32 byte arrays to temporarily hold digits either side of the decimal separator.
     // These will be later copied back into the source to remove grouping characters.
-    std.debug.assert(std.mem.len(source) <= MaxCharacters);
+    std.debug.assert(std.mem.len(self.source) <= MaxCharacters);
     var tempInteger = [_]u8{0} ** (MaxCharacters / 2);
     var tempFractional = [_]u8{0} ** (MaxCharacters / 2);
 
@@ -57,38 +96,38 @@ pub fn initAndFormat(allocator: std.mem.Allocator, source: []u8, renderingInform
     var iF: usize = 0;
 
     // Find the sign
-    if (source[i] == '-') {
-        decimal.positive = false;
+    if (self.source[i] == '-') {
+        self.positive = false;
         i += 1;
-    } else if (source[i] == '+') {
+    } else if (self.source[i] == '+') {
         i += 1;
     }
 
     // Skip over leading zeroes
-    while (i < std.mem.len(source)) : (i += 1) {
-        if (source[i] != '0') break;
+    while (i < std.mem.len(self.source)) : (i += 1) {
+        if (self.source[i] != '0') break;
     }
 
-    while (i < std.mem.len(source)) : (i += 1) {
-        const c = source[i];
+    while (i < std.mem.len(self.source)) : (i += 1) {
+        const c = self.source[i];
         switch (c) {
             '0'...'9' => {
-                decimal.digits += 1;
+                self.digits += 1;
 
-                if (decimalSeparator == 0) {
-                    tempInteger[iI] = source[i];
+                if (ri.decimalSeparator == 0) {
+                    tempInteger[iI] = self.source[i];
                     iI += 1;
                 } else {
-                    tempFractional[iF] = source[i];
+                    tempFractional[iF] = self.source[i];
                     iF += 1;
                 }
             },
             ',' => {
-                switch (decimalSeparator) {
+                switch (ri.decimalSeparator) {
                     0 => {
                         // treat the first comma as a decimal separator
-                        decimalSeparator = c;
-                        decimal.fractional = decimal.digits + 1;
+                        ri.decimalSeparator = c;
+                        self.fractional = self.digits + 1;
                     },
                     '.' => {
                         // if we've seen a period, we shouldn't be seeing commas
@@ -97,23 +136,23 @@ pub fn initAndFormat(allocator: std.mem.Allocator, source: []u8, renderingInform
                     else => {},
                 }
 
-                if (thousandMark == '_') return Error.UnexpectedCharacter;
+                if (ri.thousandMark == '_') return Error.UnexpectedCharacter;
 
                 if (j > 0 and i - j != 4) return Error.IncorrectThousandMark;
 
                 j = i;
             },
             '_' => {
-                if (thousandMark == ',') return Error.UnexpectedCharacter;
+                if (ri.thousandMark == ',') return Error.UnexpectedCharacter;
                 if (j > 0 and i - j != 4) return Error.IncorrectThousandMark;
-                thousandMark = '_';
+                ri.thousandMark = '_';
                 j = i;
             },
             '.' => {
                 if (j > 0 and i - j != 4) return Error.IncorrectThousandMark;
 
-                if (decimalSeparator == ',') {
-                    thousandMark = ',';
+                if (ri.decimalSeparator == ',') {
+                    ri.thousandMark = ',';
                     // Because we previously treated a comma as the decimal separator,
                     // all the fraction digits should now be moved to the integer digits
                     if (iF > 0) {
@@ -123,9 +162,9 @@ pub fn initAndFormat(allocator: std.mem.Allocator, source: []u8, renderingInform
                     iI += iF;
                     iF = 0;
                 }
-                decimalSeparator = '.';
+                ri.decimalSeparator = '.';
 
-                decimal.fractional = decimal.digits + 1;
+                self.fractional = self.digits + 1;
             },
             else => {
                 return Error.UnexpectedCharacter;
@@ -135,52 +174,24 @@ pub fn initAndFormat(allocator: std.mem.Allocator, source: []u8, renderingInform
 
     // Until now, decimal.fractional has been storing the index of the first digit after the decimalSeparator.
     // We need to change this now to reflect the actual number of fractional digits.
-    if (decimal.fractional > 0) {
-        decimal.fractional = decimal.digits - (decimal.fractional - 1);
-    }
-
-    if (renderingInformation) |ri| {
-        ri.*.thousandMark = thousandMark;
-        ri.*.decimalSeparator = decimalSeparator;
+    if (self.fractional > 0) {
+        self.fractional = self.digits - (self.fractional - 1);
     }
 
     // Replace the source with the formatted version.
 
     // Pad with preceding zeroes.
-    const padding = std.mem.len(source) - iI - iF;
-    std.mem.set(u8, source[0..padding], '0');
+    const padding = std.mem.len(self.source) - iI - iF;
+    std.mem.set(u8, self.source[0..padding], '0');
 
     // Copy the integer part
-    std.mem.copy(u8, source[padding .. iI + padding], tempInteger[0..iI]);
+    std.mem.copy(u8, self.source[padding .. iI + padding], tempInteger[0..iI]);
 
     // Copy the fractional part
     // We don't need a decimal separator because we know how many fractional digits are in the number.
-    std.mem.copy(u8, source[padding + iI .. padding + iI + iF], tempFractional[0..iF]);
+    std.mem.copy(u8, self.source[padding + iI .. padding + iI + iF], tempFractional[0..iF]);
 
-    return decimal;
-}
-
-/// Initialises the Decimal along with space for its source
-pub fn init(allocator: std.mem.Allocator, number: []const u8, separator: ?*RenderingInformation) !*Self {
-    var source = allocator.allocSentinel(u8, std.mem.len(number), 0) catch unreachable;
-    std.mem.copy(u8, source, number);
-    errdefer allocator.free(source);
-    var result = try initAndFormat(allocator, source, separator);
-    result.ownedSource = true;
-    return result;
-}
-
-// Does not allocate for the source and does not format
-pub fn parse(allocator: std.mem.Allocator, source: []u8, renderingInformation: ?*RenderingInformation) !*Self {
-    _ = allocator;
-    _ = source;
-    _ = renderingInformation;
-    unreachable;
-}
-
-pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-    if (self.ownedSource) allocator.free(self.source);
-    allocator.destroy(self);
+    return ri;
 }
 
 // Expand the Decimal so that it has at least nDigit digits and nFractional digits.
@@ -423,18 +434,17 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *Self) void {
     }
 }
 
-test "init and format works" {
+test "init works" {
     var s = "03,141,592.65".*; // dereference the pointer to the array
-    const d = try Self.initAndFormat(std.testing.allocator, &s, null); // pass by reference to get a slice
-    defer d.deinit(std.testing.allocator);
+    const d = try Self.init(&s, null); // pass by reference to get a slice
 
     try std.testing.expectEqual(@as(u32, 9), d.digits);
     try std.testing.expectEqual(@as(u32, 2), d.fractional);
     try std.testing.expectEqualSlices(u8, "0000314159265", &s);
 }
 
-test "init allocates for source" {
-    const d = try Self.init(std.testing.allocator, "3.14159", null);
+test "initAlloc works" {
+    const d = try Self.initAlloc(std.testing.allocator, "3.14159", null);
     defer d.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
@@ -442,7 +452,7 @@ test "init allocates for source" {
 }
 
 test "parses integers" {
-    const d = try Self.init(std.testing.allocator, "314159", null);
+    const d = try Self.initAlloc(std.testing.allocator, "314159", null);
     defer d.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
@@ -450,7 +460,7 @@ test "parses integers" {
 }
 
 test "parses positive integers" {
-    const d = try Self.init(std.testing.allocator, "+314159", null);
+    const d = try Self.initAlloc(std.testing.allocator, "+314159", null);
     defer d.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
@@ -459,7 +469,7 @@ test "parses positive integers" {
 }
 
 test "parses negative integers" {
-    const d = try Self.init(std.testing.allocator, "-314159", null);
+    const d = try Self.initAlloc(std.testing.allocator, "-314159", null);
     defer d.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
@@ -468,12 +478,12 @@ test "parses negative integers" {
 }
 
 test "error on unexpected character" {
-    const d = Self.init(std.testing.allocator, "314159a", null);
+    const d = Self.initAlloc(std.testing.allocator, "314159a", null);
     try std.testing.expectError(Error.UnexpectedCharacter, d);
 }
 
 test "parses decimals with period as decimal separator" {
-    const d = try Self.init(std.testing.allocator, "3.14159", null);
+    const d = try Self.initAlloc(std.testing.allocator, "3.14159", null);
     defer d.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
@@ -481,7 +491,7 @@ test "parses decimals with period as decimal separator" {
 }
 
 test "parses decimals with comma as decimal separator" {
-    const d = try Self.init(std.testing.allocator, "3,14159", null);
+    const d = try Self.initAlloc(std.testing.allocator, "3,14159", null);
     defer d.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
@@ -490,7 +500,7 @@ test "parses decimals with comma as decimal separator" {
 
 test "parses decimals with thousand separators" {
     var ri = RenderingInformation{};
-    const d = try Self.init(std.testing.allocator, "3,141,592.650", &ri);
+    const d = try Self.initAlloc(std.testing.allocator, "3,141,592.650", &ri);
     defer d.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 10), d.digits);
@@ -501,30 +511,29 @@ test "parses decimals with thousand separators" {
 }
 
 test "errors on thousand-marks after decimal point" {
-    const d = Self.init(std.testing.allocator, "3_141_592.650_123_430", null);
+    const d = Self.initAlloc(std.testing.allocator, "3_141_592.650_123_430", null);
     try std.testing.expectError(Error.IncorrectThousandMark, d);
 }
 
 test "error on incorrect thousand-mark placement" {
-    const a = Self.init(std.testing.allocator, "3,14,1592.501", null);
+    const a = Self.initAlloc(std.testing.allocator, "3,14,1592.501", null);
     try std.testing.expectError(Error.IncorrectThousandMark, a);
 
-    const b = Self.init(std.testing.allocator, "31415,92.501", null);
+    const b = Self.initAlloc(std.testing.allocator, "31415,92.501", null);
     try std.testing.expectError(Error.IncorrectThousandMark, b);
 
-    const c = Self.init(std.testing.allocator, "31415_92.501", null);
+    const c = Self.initAlloc(std.testing.allocator, "31415_92.501", null);
     try std.testing.expectError(Error.IncorrectThousandMark, c);
 }
 
 test "error on mixed thousand-marks" {
-    const d = Self.init(std.testing.allocator, "3_141,592.01", null);
+    const d = Self.initAlloc(std.testing.allocator, "3_141,592.01", null);
     try std.testing.expectError(Error.UnexpectedCharacter, d);
 }
 
 test "expand (local): no change" {
     var s = "003,141.59".*;
-    const a = try Self.initAndFormat(std.testing.allocator, &s, null);
-    defer a.deinit(std.testing.allocator);
+    var a = try Self.init(&s, null);
 
     try std.testing.expectEqual(@as(u32, 6), a.digits);
     try std.testing.expectEqual(@as(u32, 2), a.fractional);
@@ -538,8 +547,7 @@ test "expand (local): no change" {
 
 test "expand (local): additional integers" {
     var s = "0015.92".*;
-    const a = try Self.initAndFormat(std.testing.allocator, &s, null);
-    defer a.deinit(std.testing.allocator);
+    var a = try Self.init(&s, null);
 
     try std.testing.expectEqual(@as(u32, 4), a.digits);
     try std.testing.expectEqual(@as(u32, 2), a.fractional);
@@ -553,8 +561,7 @@ test "expand (local): additional integers" {
 
 test "expand (local): additional fractional" {
     var s = "001.92".*;
-    const a = try Self.initAndFormat(std.testing.allocator, &s, null);
-    defer a.deinit(std.testing.allocator);
+    var a = try Self.init(&s, null);
 
     try std.testing.expectEqual(@as(u32, 3), a.digits);
     try std.testing.expectEqual(@as(u32, 2), a.fractional);
@@ -569,8 +576,7 @@ test "expand (local): additional integers and additional fractional" {
     // We dereference the pointer to the array then pass by reference to get a slice
     var s = "001,215.92".*;
 
-    const a = try Self.initAndFormat(std.testing.allocator, &s, null);
-    defer a.deinit(std.testing.allocator);
+    var a = try Self.init(&s, null);
 
     try std.testing.expectEqual(@as(u32, 6), a.digits);
     try std.testing.expectEqual(@as(u32, 2), a.fractional);
@@ -582,8 +588,8 @@ test "expand (local): additional integers and additional fractional" {
 }
 
 test "expand (local): multiple expands" {
-    var a = try Self.init(std.testing.allocator, "003", null);
-    defer a.deinit(std.testing.allocator);
+    var s = "003".*;
+    var a = try Self.init(&s, null);
 
     try std.testing.expectEqual(@as(u32, 1), a.digits);
     try std.testing.expectEqual(@as(u32, 0), a.fractional);
@@ -611,7 +617,7 @@ test "expand (local): multiple expands" {
 }
 
 test "expand (alloc): no change" {
-    const a = try Self.init(std.testing.allocator, "003,115.92", null);
+    const a = try Self.initAlloc(std.testing.allocator, "003,115.92", null);
     defer a.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 6), a.digits);
@@ -625,7 +631,7 @@ test "expand (alloc): no change" {
 }
 
 test "expand (alloc): additional integers" {
-    const a = try Self.init(std.testing.allocator, "3", null);
+    const a = try Self.initAlloc(std.testing.allocator, "3", null);
     defer a.deinit(std.testing.allocator);
 
     const available = a.expand(std.testing.allocator, 3, 0);
@@ -635,7 +641,7 @@ test "expand (alloc): additional integers" {
 }
 
 test "expand (alloc): additional fractional" {
-    const a = try Self.init(std.testing.allocator, "3.1", null);
+    const a = try Self.initAlloc(std.testing.allocator, "3.1", null);
     defer a.deinit(std.testing.allocator);
 
     const available = a.expand(std.testing.allocator, 4, 2);
@@ -645,7 +651,7 @@ test "expand (alloc): additional fractional" {
 }
 
 test "expand (alloc): additional integers and additional fractional" {
-    const a = try Self.init(std.testing.allocator, "5.92", null);
+    const a = try Self.initAlloc(std.testing.allocator, "5.92", null);
     defer a.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 3), a.digits);
@@ -659,7 +665,7 @@ test "expand (alloc): additional integers and additional fractional" {
 }
 
 test "expand (alloc): multiple expands" {
-    var a = try Self.init(std.testing.allocator, "3", null);
+    var a = try Self.initAlloc(std.testing.allocator, "3", null);
     defer a.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 1), a.digits);
@@ -695,7 +701,7 @@ test "loop test" {
     std.testing.log_level = .debug;
     std.log.info("", .{});
 
-    const a = try Self.init(std.testing.allocator, "003,115.9", null);
+    const a = try Self.initAlloc(std.testing.allocator, "003,115.9", null);
     defer a.deinit(std.testing.allocator);
 
     // const b = try Self.init(std.testing.allocator, "115.9", null);
