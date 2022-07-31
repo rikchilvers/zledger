@@ -69,8 +69,6 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 //     2. Identify how to render back if printed.
 //     3. Remove all non-digit characters from the source.
 fn parse(self: *Self, format: bool) !Style {
-    _ = format;
-
     // Rendering style
     var style: Style = .{
         .thousandMark = 0,
@@ -81,16 +79,16 @@ fn parse(self: *Self, format: bool) !Style {
     var i: usize = 0;
     // Position of last thousand-mark
     var j: usize = 0;
+    // Whether we've seen a significant figure
+    var seenSignificant = false;
 
     // We use two 32 byte arrays to temporarily hold digits either side of the decimal separator.
     // These will be later copied back into the source to remove grouping characters.
     std.debug.assert(std.mem.len(self.source) <= MaxCharacters);
     var tempInteger = [_]u8{0} ** (MaxCharacters / 2);
     var tempFractional = [_]u8{0} ** (MaxCharacters / 2);
-
-    // Indices into the temp(Integer|Fractional) arrays
-    var iI: usize = 0;
-    var iF: usize = 0;
+    var tempIntegerIndex: usize = 0;
+    var tempFractionalIndex: usize = 0;
 
     // Find the sign
     if (self.source[i] == '-') {
@@ -100,26 +98,27 @@ fn parse(self: *Self, format: bool) !Style {
         i += 1;
     }
 
-    // Skip over leading zeroes
-    while (i < std.mem.len(self.source)) : (i += 1) {
-        if (self.source[i] != '0') break;
-    }
-
     while (i < std.mem.len(self.source)) : (i += 1) {
         const c = self.source[i];
         switch (c) {
             '0'...'9' => {
+                // Skip over leading zeroes
+                if (c > '0') seenSignificant = true;
+                if (!seenSignificant) continue;
+
                 self.digits += 1;
 
-                    tempInteger[iI] = self.source[i];
-                    iI += 1;
                 if (style.decimalSeparator == 0) {
+                    if (format) tempInteger[tempIntegerIndex] = self.source[i];
+                    tempIntegerIndex += 1;
                 } else {
-                    tempFractional[iF] = self.source[i];
-                    iF += 1;
+                    if (format) tempFractional[tempFractionalIndex] = self.source[i];
+                    tempFractionalIndex += 1;
                 }
             },
             ',' => {
+                if (!seenSignificant) return Error.IncorrectThousandMark;
+
                 switch (style.decimalSeparator) {
                     0 => {
                         // treat the first comma as a decimal separator
@@ -140,24 +139,32 @@ fn parse(self: *Self, format: bool) !Style {
                 j = i;
             },
             '_' => {
+                if (!seenSignificant) return Error.IncorrectThousandMark;
                 if (style.thousandMark == ',') return Error.UnexpectedCharacter;
                 if (j > 0 and i - j != 4) return Error.IncorrectThousandMark;
+
                 style.thousandMark = '_';
                 j = i;
             },
             '.' => {
+                if (!seenSignificant) return Error.UnexpectedCharacter;
+
                 if (j > 0 and i - j != 4) return Error.IncorrectThousandMark;
 
                 if (style.decimalSeparator == ',') {
                     style.thousandMark = ',';
                     // Because we previously treated a comma as the decimal separator,
                     // all the fraction digits should now be moved to the integer digits
-                    if (iF > 0) {
-                        std.mem.copy(u8, tempInteger[iI .. iI + iF], tempFractional[0..iF]);
-                        std.mem.set(u8, tempFractional[0..iF], 0);
+                    if (tempFractionalIndex > 0 and format) {
+                        std.mem.copy(
+                            u8,
+                            tempInteger[tempIntegerIndex .. tempIntegerIndex + tempFractionalIndex],
+                            tempFractional[0..tempFractionalIndex],
+                        );
+                        std.mem.set(u8, tempFractional[0..tempFractionalIndex], 0);
                     }
-                    iI += iF;
-                    iF = 0;
+                    tempIntegerIndex += tempFractionalIndex;
+                    tempFractionalIndex = 0;
                 }
                 style.decimalSeparator = '.';
 
@@ -176,17 +183,22 @@ fn parse(self: *Self, format: bool) !Style {
     }
 
     // Replace the source with the formatted version.
+    if (format) {
+        // Pad with preceding zeroes.
+        const padding = std.mem.len(self.source) - tempIntegerIndex - tempFractionalIndex;
+        std.mem.set(u8, self.source[0..padding], '0');
 
-    // Pad with preceding zeroes.
-    const padding = std.mem.len(self.source) - iI - iF;
-    std.mem.set(u8, self.source[0..padding], '0');
+        // Copy the integer part
+        std.mem.copy(u8, self.source[padding .. tempIntegerIndex + padding], tempInteger[0..tempIntegerIndex]);
 
-    // Copy the integer part
-    std.mem.copy(u8, self.source[padding .. iI + padding], tempInteger[0..iI]);
-
-    // Copy the fractional part
-    // We don't need a decimal separator because we know how many fractional digits are in the number.
-    std.mem.copy(u8, self.source[padding + iI .. padding + iI + iF], tempFractional[0..iF]);
+        // Copy the fractional part
+        // We don't need a decimal separator because we know how many fractional digits are in the number.
+        std.mem.copy(
+            u8,
+            self.source[padding + tempIntegerIndex .. padding + tempIntegerIndex + tempFractionalIndex],
+            tempFractional[0..tempFractionalIndex],
+        );
+    }
 
     return style;
 }
@@ -221,7 +233,8 @@ pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigits: u32, nFraction
         // TODO: check we won't overflow this
         var scratch = [_]u8{'0'} ** MaxCharacters;
 
-        // Copy all significant digits (i.e. not any preceding unused characters) from source into scratch, making space for additional fractional.
+        // Copy all significant digits (i.e. not any preceding unused characters) from source into scratch,
+        // making space for additional fractional.
         std.mem.copy(u8, scratch[available - addFrac ..], self.source[available..]);
 
         // Update self.source
@@ -437,7 +450,7 @@ test "init works" {
 
     try std.testing.expectEqual(@as(u32, 9), d.digits);
     try std.testing.expectEqual(@as(u32, 2), d.fractional);
-    try std.testing.expectEqualSlices(u8, "0000314159265", &s);
+    try std.testing.expectEqualSlices(u8, "03,141,592.65", &s);
 }
 
 test "initAlloc works" {
@@ -528,90 +541,93 @@ test "error on mixed thousand-marks" {
     try std.testing.expectError(Error.UnexpectedCharacter, d);
 }
 
-test "expand (local): no change" {
-    var s = "003,141.59".*;
-    var a = try Self.init(&s, null);
+// Commenting these out because at the moment expand is not expected to be called on
+// non-owned sources.
+//
+// test "expand (local): no change" {
+//     var s = "003,141.59".*;
+//     var a = try Self.init(&s, null);
 
-    try std.testing.expectEqual(@as(u32, 6), a.digits);
-    try std.testing.expectEqual(@as(u32, 2), a.fractional);
-    try std.testing.expectEqualSlices(u8, "0000314159", &s);
+//     try std.testing.expectEqual(@as(u32, 6), a.digits);
+//     try std.testing.expectEqual(@as(u32, 2), a.fractional);
+//     try std.testing.expectEqualSlices(u8, "003,141.59", &s);
 
-    const available = a.expand(std.testing.allocator, 7, 2);
-    // should be no change to source during this expand
-    try std.testing.expectEqualSlices(u8, "0000314159", &s);
-    try std.testing.expectEqual(@as(u32, 3), available);
-}
+//     const available = a.expand(std.testing.allocator, 7, 2);
+//     // should be no change to source during this expand
+//     try std.testing.expectEqualSlices(u8, "0000314159", &s);
+//     try std.testing.expectEqual(@as(u32, 3), available);
+// }
 
-test "expand (local): additional integers" {
-    var s = "0015.92".*;
-    var a = try Self.init(&s, null);
+// test "expand (local): additional integers" {
+//     var s = "0015.92".*;
+//     var a = try Self.init(&s, null);
 
-    try std.testing.expectEqual(@as(u32, 4), a.digits);
-    try std.testing.expectEqual(@as(u32, 2), a.fractional);
-    try std.testing.expectEqualSlices(u8, "0001592", &s);
+//     try std.testing.expectEqual(@as(u32, 4), a.digits);
+//     try std.testing.expectEqual(@as(u32, 2), a.fractional);
+//     try std.testing.expectEqualSlices(u8, "0001592", &s);
 
-    const available = a.expand(std.testing.allocator, 6, 2);
-    // should be no change to source during this expand
-    try std.testing.expectEqualSlices(u8, "0001592", &s);
-    try std.testing.expectEqual(@as(u32, 1), available);
-}
+//     const available = a.expand(std.testing.allocator, 6, 2);
+//     // should be no change to source during this expand
+//     try std.testing.expectEqualSlices(u8, "0001592", &s);
+//     try std.testing.expectEqual(@as(u32, 1), available);
+// }
 
-test "expand (local): additional fractional" {
-    var s = "001.92".*;
-    var a = try Self.init(&s, null);
+// test "expand (local): additional fractional" {
+//     var s = "001.92".*;
+//     var a = try Self.init(&s, null);
 
-    try std.testing.expectEqual(@as(u32, 3), a.digits);
-    try std.testing.expectEqual(@as(u32, 2), a.fractional);
-    try std.testing.expectEqualSlices(u8, "000192", a.source);
+//     try std.testing.expectEqual(@as(u32, 3), a.digits);
+//     try std.testing.expectEqual(@as(u32, 2), a.fractional);
+//     try std.testing.expectEqualSlices(u8, "000192", a.source);
 
-    const available = a.expand(std.testing.allocator, 5, 3);
-    try std.testing.expectEqualSlices(u8, "001920", &s);
-    try std.testing.expectEqual(@as(u32, 1), available);
-}
+//     const available = a.expand(std.testing.allocator, 5, 3);
+//     try std.testing.expectEqualSlices(u8, "001920", &s);
+//     try std.testing.expectEqual(@as(u32, 1), available);
+// }
 
-test "expand (local): additional integers and additional fractional" {
-    // We dereference the pointer to the array then pass by reference to get a slice
-    var s = "001,215.92".*;
+// test "expand (local): additional integers and additional fractional" {
+//     // We dereference the pointer to the array then pass by reference to get a slice
+//     var s = "001,215.92".*;
 
-    var a = try Self.init(&s, null);
+//     var a = try Self.init(&s, null);
 
-    try std.testing.expectEqual(@as(u32, 6), a.digits);
-    try std.testing.expectEqual(@as(u32, 2), a.fractional);
-    try std.testing.expectEqualSlices(u8, "0000121592", &s);
+//     try std.testing.expectEqual(@as(u32, 6), a.digits);
+//     try std.testing.expectEqual(@as(u32, 2), a.fractional);
+//     try std.testing.expectEqualSlices(u8, "001,215,92", &s);
 
-    const available = a.expand(std.testing.allocator, 8, 3);
-    try std.testing.expectEqualSlices(u8, "0001215920", &s);
-    try std.testing.expectEqual(@as(u32, 2), available);
-}
+//     const available = a.expand(std.testing.allocator, 8, 3);
+//     try std.testing.expectEqualSlices(u8, "0001215920", &s);
+//     try std.testing.expectEqual(@as(u32, 2), available);
+// }
 
-test "expand (local): multiple expands" {
-    var s = "003".*;
-    var a = try Self.init(&s, null);
+// test "expand (local): multiple expands" {
+//     var s = "003".*;
+//     var a = try Self.init(&s, null);
 
-    try std.testing.expectEqual(@as(u32, 1), a.digits);
-    try std.testing.expectEqual(@as(u32, 0), a.fractional);
+//     try std.testing.expectEqual(@as(u32, 1), a.digits);
+//     try std.testing.expectEqual(@as(u32, 0), a.fractional);
 
-    var available = a.expand(std.testing.allocator, 3, 0);
+//     var available = a.expand(std.testing.allocator, 3, 0);
 
-    try std.testing.expectEqualSlices(u8, "003", a.source);
-    try std.testing.expectEqual(@as(u32, 3), a.digits);
-    try std.testing.expectEqual(@as(u32, 0), a.fractional);
-    try std.testing.expectEqual(@as(u32, 0), available);
+//     try std.testing.expectEqualSlices(u8, "003", a.source);
+//     try std.testing.expectEqual(@as(u32, 3), a.digits);
+//     try std.testing.expectEqual(@as(u32, 0), a.fractional);
+//     try std.testing.expectEqual(@as(u32, 0), available);
 
-    available = a.expand(std.testing.allocator, 3, 0);
+//     available = a.expand(std.testing.allocator, 3, 0);
 
-    try std.testing.expectEqualSlices(u8, "003", a.source);
-    try std.testing.expectEqual(@as(u32, 3), a.digits);
-    try std.testing.expectEqual(@as(u32, 0), a.fractional);
-    try std.testing.expectEqual(@as(u32, 0), available);
+//     try std.testing.expectEqualSlices(u8, "003", a.source);
+//     try std.testing.expectEqual(@as(u32, 3), a.digits);
+//     try std.testing.expectEqual(@as(u32, 0), a.fractional);
+//     try std.testing.expectEqual(@as(u32, 0), available);
 
-    available = a.expand(std.testing.allocator, 3, 0);
+//     available = a.expand(std.testing.allocator, 3, 0);
 
-    try std.testing.expectEqualSlices(u8, "003", a.source);
-    try std.testing.expectEqual(@as(u32, 3), a.digits);
-    try std.testing.expectEqual(@as(u32, 0), a.fractional);
-    try std.testing.expectEqual(@as(u32, 0), available);
-}
+//     try std.testing.expectEqualSlices(u8, "003", a.source);
+//     try std.testing.expectEqual(@as(u32, 3), a.digits);
+//     try std.testing.expectEqual(@as(u32, 0), a.fractional);
+//     try std.testing.expectEqual(@as(u32, 0), available);
+// }
 
 test "expand (alloc): no change" {
     const a = try Self.initAlloc(std.testing.allocator, "003,115.92", null);
