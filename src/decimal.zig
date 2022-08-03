@@ -39,7 +39,7 @@ pub fn initAlloc(allocator: std.mem.Allocator, number: []const u8, style: ?*Styl
     self.ownedSource = true;
 
     const renderingStyle = try self.parse(true);
-    if (style) |s| s.* = renderingStyle;
+    if (style) |value| value.* = renderingStyle;
 
     return self;
 }
@@ -54,7 +54,7 @@ pub fn init(source: []u8, style: ?*Style) !Self {
     };
 
     const renderingStyle = try self.parse(false);
-    if (style) |s| s.* = renderingStyle;
+    if (style) |value| value.* = renderingStyle;
 
     return self;
 }
@@ -278,23 +278,23 @@ pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigits: u32, nFraction
 }
 
 const SliceIterator = struct {
-    a: []u8,
-    b: []u8,
-    i: usize,
-    j: usize,
-    iComplete: bool,
-    jComplete: bool,
+    lhs: []u8,
+    rhs: []u8,
+    lhsIndex: usize,
+    rhsIndex: usize,
+    lhsComplete: bool,
+    rhsComplete: bool,
     fractionalDifference: i64,
 
     // The fractionalDifference is a.fractional - b.fractional
-    pub fn init(a: []u8, b: []u8, fractionalDifference: i64) SliceIterator {
+    pub fn init(lhs: []u8, rhs: []u8, fractionalDifference: i64) SliceIterator {
         return .{
-            .a = a,
-            .b = b,
-            .i = std.mem.len(a) - 1,
-            .j = std.mem.len(b) - 1,
-            .iComplete = false,
-            .jComplete = false,
+            .lhs = lhs,
+            .rhs = rhs,
+            .lhsIndex = std.mem.len(lhs) - 1,
+            .rhsIndex = std.mem.len(rhs) - 1,
+            .lhsComplete = false,
+            .rhsComplete = false,
             .fractionalDifference = fractionalDifference,
         };
     }
@@ -307,32 +307,32 @@ const SliceIterator = struct {
         // If they are unequal, we only take a digit from the slice that has more.
         if (self.fractionalDifference > 0) {
             // self.a has more fractional digits than self.b
-            lhsIndex.* = self.i;
+            lhsIndex.* = self.lhsIndex;
             rhsIndex.* = null;
             self.fractionalDifference -= 1;
         } else if (self.fractionalDifference < 0) {
             // self.b has more fractional digits than self.a
             lhsIndex.* = null;
-            rhsIndex.* = self.j;
+            rhsIndex.* = self.rhsIndex;
             self.fractionalDifference += 1;
         } else {
-            lhsIndex.* = self.i;
-            rhsIndex.* = self.j;
+            lhsIndex.* = self.lhsIndex;
+            rhsIndex.* = self.rhsIndex;
         }
 
         // If the fractionalDifference is > 0, a has more fractional digits than b.
         // That means we can only advance a.
         if (self.fractionalDifference >= 0) {
-            if (self.i > 0) {
-                self.i -= 1;
-                if (self.a[self.i] < '0' or self.a[self.i] > '9') {
-                    self.i -= 1;
+            if (self.lhsIndex > 0) {
+                self.lhsIndex -= 1;
+                if (self.lhs[self.lhsIndex] < '0' or self.lhs[self.lhsIndex] > '9') {
+                    self.lhsIndex -= 1;
                 }
             } else {
-                if (self.iComplete) {
+                if (self.lhsComplete) {
                     lhsIndex.* = null;
                 } else {
-                    self.iComplete = true;
+                    self.lhsComplete = true;
                 }
             }
         }
@@ -340,26 +340,26 @@ const SliceIterator = struct {
         // If the fractionDifference is < 0, b has more fractional digits than a.
         // That means we can only advance b.
         if (self.fractionalDifference <= 0) {
-            if (self.j > 0) {
-                self.j -= 1;
+            if (self.rhsIndex > 0) {
+                self.rhsIndex -= 1;
 
                 // The decimal slices that we are given have been parsed before being seen
                 // by this function. That means we can safely assume the final character is not
                 // going to be a non-digit character and therefore we can -1 from the index without
                 // setting ourselves up for an out of bounds error.
-                if (self.b[self.j] < '0' or self.b[self.j] > '9') {
-                    self.j -= 1;
+                if (self.rhs[self.rhsIndex] < '0' or self.rhs[self.rhsIndex] > '9') {
+                    self.rhsIndex -= 1;
                 }
             } else {
-                if (self.jComplete) {
+                if (self.rhsComplete) {
                     rhsIndex.* = null;
                 } else {
-                    self.jComplete = true;
+                    self.rhsComplete = true;
                 }
             }
         }
 
-        return if (self.iComplete and self.jComplete) false else true;
+        return if (self.lhsComplete and self.rhsComplete) false else true;
     }
 };
 
@@ -393,51 +393,29 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *const Self) void {
 
     if (self.positive == other.positive) {
         var carry: u8 = 0;
-        // var i = totalDigits - 1;
 
-        var a: ?usize = null;
-        var b: ?usize = null;
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
         const fractionalDifference: i64 = @as(i64, self.fractional) - @as(i64, other.fractional);
-        var iter = SliceIterator.init(self.source[available..], other.source, fractionalDifference);
-        while (iter.next(&a, &b)) {
-            _ = carry;
-            const i = if (a) |x| self.source[x + available] else '0';
-            const j = if (b) |y| other.source[y] else '0';
+        var iter = SliceIterator.init(self.source, other.source, fractionalDifference);
+        while (iter.next(&lhsIndex, &rhsIndex)) {
+            const lhs = if (lhsIndex) |idx| self.source[idx] else '0';
+            const rhs = if (rhsIndex) |idx| other.source[idx] else '0';
 
-            std.log.info("Do a thing with {c} and {c}", .{ i, j });
-
-            const sum = i + j + carry - 48 * 2;
+            const sum = lhs + rhs + carry - 48 * 2;
             if (sum >= 10) {
                 carry = 1;
-                std.log.info("index = {d}", .{a.?});
-                std.log.info("setting {d} of {c} to {d}", .{ a.?, self.source, sum - 10 + 48 });
-                self.source[a.?] = sum - 10 + 48;
+                // We can force unrwap this because we know the lhs will always be large enough
+                // FIXME: can we be sure of this? How can we test?
+                self.source[lhsIndex.?] = sum - 10 + 48;
             } else {
                 carry = 0;
-                self.source[a.?] = sum + 48;
+                self.source[lhsIndex.?] = sum + 48;
             }
         }
 
-        // Handle left over carry
-        std.log.info("setting {d} of {c} to {d}", .{ a.?, self.source, carry + 48 });
-        self.source[a.?] = carry + 48;
-
-        // We have to shuffle the values around by 48 as this is ASCII for 0.
-        // while (i >= 0) {
-        //     std.log.info("attempting to index {d} + {d}", .{ available, i });
-        //     const x = self.source[available + i] + other.source[i] + carry - 48 * 2;
-
-        //     if (x >= 10) {
-        //         carry = 1;
-        //         self.source[available + i] = x - 10 + 48;
-        //     } else {
-        //         carry = 0;
-        //         self.source[available + i] = x + 48;
-        //     }
-
-        //     if (i == 0) break;
-        //     i -= 1;
-        // }
+        // Handle left over carried value
+        self.source[lhsIndex.?] = carry + 48;
     } else {
         var lhs = self.source[available..];
         var rhs = other.source;
@@ -733,35 +711,6 @@ test "expand (alloc): multiple expands" {
     try std.testing.expectEqual(@as(u32, 0), available);
 }
 
-fn do(lhs: u8, rhs: u8) void {
-    std.log.info("Do a thing with {d} and {d}", .{ lhs - 48, rhs - 48 });
-}
-
-test "loop test" {
-    // std.testing.log_level = .debug;
-    std.log.info("", .{});
-
-    const a = try Self.initAlloc(std.testing.allocator, "003,115.9", null);
-    defer a.deinit(std.testing.allocator);
-
-    // const b = try Self.init(std.testing.allocator, "115.9", null);
-    // defer b.deinit(std.testing.allocator);
-
-    const aAvailable = a.expand(std.testing.allocator, 6 + 1, 2);
-    const bAvailable = 0; //b.expand(std.testing.allocator, 6 + 1, 2);
-
-    // loopTest(a.source[aAvailable..], b.source[bAvailable..], do);
-    var c = "115.92".*;
-    var iter = SliceIterator.init(a.source[aAvailable..], &c, 1 - 2);
-    var x: ?usize = null;
-    var y: ?usize = null;
-    while (iter.next(&x, &y)) {
-        const i = if (x) |xP| a.source[xP + aAvailable] else '0';
-        const j = if (y) |yP| c[yP + bAvailable] else '0';
-        std.log.info("Do a thing with {c} and {c}", .{ i, j });
-    }
-}
-
 test "adds two positive integers" {
     const a = try Self.initAlloc(std.testing.allocator, "4", null);
     defer a.deinit(std.testing.allocator);
@@ -844,9 +793,6 @@ test "adds two positive decimals" {
 // }
 
 test "adding multiple times" {
-    std.testing.log_level = .debug;
-    std.log.info("", .{});
-
     var sum = try Self.initAlloc(std.testing.allocator, "0", null);
     defer sum.deinit(std.testing.allocator);
 
