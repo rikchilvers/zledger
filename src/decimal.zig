@@ -98,13 +98,17 @@ fn parse(self: *Self, format: bool) !Style {
         i += 1;
     }
 
+    var precedingZeroes: u8 = 0;
     while (i < std.mem.len(self.source)) : (i += 1) {
         const c = self.source[i];
         switch (c) {
             '0'...'9' => {
                 // Skip over leading zeroes
                 if (c > '0') seenSignificant = true;
-                if (!seenSignificant) continue;
+                if (!seenSignificant) {
+                    precedingZeroes += 1;
+                    continue;
+                }
 
                 self.digits += 1;
 
@@ -199,6 +203,9 @@ fn parse(self: *Self, format: bool) !Style {
             tempFractional[0..tempFractionalIndex],
         );
     }
+
+    // If we don't own the source (i.e. it's from a text file), we want to trim out any preceding zeroes
+    if (!self.ownedSource) self.source = self.source[precedingZeroes..];
 
     return style;
 }
@@ -384,13 +391,6 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *const Self) void {
 
     const available = self.expand(allocator, totalDigits, fractionalDigits);
 
-    // TODO: do we need to expand other if it's an owned source?
-    var otherAvailable: u32 = 0;
-    // We only expand other if fractional digits are not the same
-    // if (fractionalDigits > other.fractional) {
-    //     otherAvailable = other.expand(allocator, totalDigits, fractionalDigits);
-    // }
-
     if (self.positive == other.positive) {
         var carry: u8 = 0;
         // var i = totalDigits - 1;
@@ -425,7 +425,7 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *const Self) void {
         // We have to shuffle the values around by 48 as this is ASCII for 0.
         // while (i >= 0) {
         //     std.log.info("attempting to index {d} + {d}", .{ available, i });
-        //     const x = self.source[available + i] + other.source[otherAvailable + i] + carry - 48 * 2;
+        //     const x = self.source[available + i] + other.source[i] + carry - 48 * 2;
 
         //     if (x >= 10) {
         //         carry = 1;
@@ -440,14 +440,14 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *const Self) void {
         // }
     } else {
         var lhs = self.source[available..];
-        var rhs = other.source[otherAvailable..];
+        var rhs = other.source;
         std.debug.assert(std.mem.len(lhs) == std.mem.len(rhs));
 
         var borrow: u8 = 0;
         var i = totalDigits - 1;
 
         if (std.mem.lessThan(u8, lhs, rhs)) {
-            lhs = other.source[otherAvailable..];
+            lhs = other.source;
             rhs = self.source[available..];
             self.positive = !self.positive;
         }
@@ -471,12 +471,13 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *const Self) void {
 }
 
 test "init works" {
-    var s = "03,141,592.65".*; // dereference the pointer to the array
+    std.testing.log_level = .debug;
+    var s = "003,141,592.65".*; // dereference the pointer to the array
     const d = try Self.init(&s, null); // pass by reference to get a slice
 
     try std.testing.expectEqual(@as(u32, 9), d.digits);
     try std.testing.expectEqual(@as(u32, 2), d.fractional);
-    try std.testing.expectEqualSlices(u8, "03,141,592.65", &s);
+    try std.testing.expectEqualSlices(u8, "3,141,592.65", d.source);
 }
 
 test "initAlloc works" {
