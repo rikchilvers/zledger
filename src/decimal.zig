@@ -81,6 +81,8 @@ fn parse(self: *Self, format: bool) !Style {
     var j: usize = 0;
     // Whether we've seen a significant figure
     var seenSignificant = false;
+    // Preceding zeroes or sign characters
+    var precedingZeroes: u8 = 0;
 
     // We use two 32 byte arrays to temporarily hold digits either side of the decimal separator.
     // These will be later copied back into the source to remove grouping characters.
@@ -92,13 +94,14 @@ fn parse(self: *Self, format: bool) !Style {
 
     // Find the sign
     if (self.source[i] == '-') {
+        precedingZeroes += 1;
         self.positive = false;
         i += 1;
     } else if (self.source[i] == '+') {
+        precedingZeroes += 1;
         i += 1;
     }
 
-    var precedingZeroes: u8 = 0;
     while (i < std.mem.len(self.source)) : (i += 1) {
         const c = self.source[i];
         switch (c) {
