@@ -214,8 +214,6 @@ fn parse(self: *Self, format: bool) !Style {
 // This function expects that the decimal has been formatted to remove all non-digit characters.
 // Returns the number of unused characters at the start of the source.
 pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigits: u32, nFractional: u32) u32 {
-    std.log.info("expand to {d}.{d}", .{ nDigits, nFractional });
-
     const available = @intCast(u32, std.mem.len(self.source) - self.digits);
 
     if (self.digits >= nDigits and self.fractional >= nFractional) return available;
@@ -459,11 +457,12 @@ test "init works" {
 }
 
 test "initAlloc works" {
-    const d = try Self.initAlloc(std.testing.allocator, "3.14159", null);
+    const d = try Self.initAlloc(std.testing.allocator, "003.14159", null);
     defer d.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 6), d.digits);
     try std.testing.expectEqual(@as(u32, 5), d.fractional);
+    try std.testing.expectEqualSlices(u8, "000314159", d.source);
 }
 
 test "parses integers" {
@@ -724,7 +723,7 @@ test "adds two positive integers" {
 }
 
 test "adds two positive decimals" {
-    const a = try Self.initAlloc(std.testing.allocator, "4.2", null);
+    const a = try Self.initAlloc(std.testing.allocator, "04.2", null);
     defer a.deinit(std.testing.allocator);
 
     var bSource = "6.9".*;
@@ -732,7 +731,7 @@ test "adds two positive decimals" {
 
     a.add(std.testing.allocator, &b);
 
-    try std.testing.expectEqualSlices(u8, "111", a.source);
+    try std.testing.expectEqualSlices(u8, "0111", a.source);
 }
 
 // test "adds two negative integers" {
