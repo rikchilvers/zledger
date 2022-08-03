@@ -737,18 +737,18 @@ test "adds two positive decimals" {
     try std.testing.expectEqualSlices(u8, "0111", a.source);
 }
 
-// test "adds two negative integers" {
-//     const a = try Self.initAlloc(std.testing.allocator, "-8", null);
-//     defer a.deinit(std.testing.allocator);
+test "adds two negative integers" {
+    const a = try Self.initAlloc(std.testing.allocator, "-8", null);
+    defer a.deinit(std.testing.allocator);
 
-//     var bSource = "-3".*;
-//     const b = try Self.init(&bSource, null);
+    var bSource = "-3".*;
+    const b = try Self.init(&bSource, null);
 
-//     a.add(std.testing.allocator, &b);
+    a.add(std.testing.allocator, &b);
 
-//     try std.testing.expectEqualSlices(u8, "11", a.source);
-//     try std.testing.expect(!a.positive);
-// }
+    try std.testing.expectEqualSlices(u8, "11", a.source);
+    try std.testing.expect(!a.positive);
+}
 
 // test "adds two negative decimals" {
 //     const a = try Self.init(std.testing.allocator, "-8.7", null);
