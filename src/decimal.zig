@@ -304,28 +304,36 @@ const SliceIterator = struct {
     // works from back-to-front, setting the passed pointers to the current value
     // of the indices or null if there is no digit in that place value.
     pub fn next(self: *SliceIterator, lhsIndex: *?usize, rhsIndex: *?usize) bool {
-        // First, we handle a and b having different numbers of fractional digits.
+        // We track this because advancing lhs and rhs independently relies on knowing the current value.
+        var fdChange: i64 = 0;
+        defer self.fractionalDifference += fdChange;
+
+        // First, we handle lhs and rhs having different numbers of fractional digits.
         // If they are unequal, we only take a digit from the slice that has more.
         if (self.fractionalDifference > 0) {
-            // self.a has more fractional digits than self.b
+            // lhs has more fractional digits than rhs
             lhsIndex.* = self.lhsIndex;
             rhsIndex.* = null;
-            self.fractionalDifference -= 1;
+            fdChange -= 1;
         } else if (self.fractionalDifference < 0) {
-            // self.b has more fractional digits than self.a
+            // rhs has more fractional digits than lhs
             lhsIndex.* = null;
             rhsIndex.* = self.rhsIndex;
-            self.fractionalDifference += 1;
+            fdChange += 1;
         } else {
             lhsIndex.* = self.lhsIndex;
             rhsIndex.* = self.rhsIndex;
         }
 
-        // If the fractionalDifference is > 0, a has more fractional digits than b.
-        // That means we can only advance a.
+        // If the fractionalDifference is > 0, lhs has more fractional digits than rhs.
+        // That means we can only advance lhs.
         if (self.fractionalDifference >= 0) {
             if (self.lhsIndex > 0) {
                 self.lhsIndex -= 1;
+                // The decimal slices that we are given have been parsed before being seen
+                // by this function. That means we can safely assume the final character is not
+                // going to be a non-digit character and therefore we can -1 from the index without
+                // setting ourselves up for an out of bounds error.
                 if (self.lhs[self.lhsIndex] < '0' or self.lhs[self.lhsIndex] > '9') {
                     self.lhsIndex -= 1;
                 }
@@ -338,16 +346,11 @@ const SliceIterator = struct {
             }
         }
 
-        // If the fractionDifference is < 0, b has more fractional digits than a.
-        // That means we can only advance b.
+        // If the fractionDifference is < 0, rhs has more fractional digits than lhs.
+        // That means we can only advance rhs.
         if (self.fractionalDifference <= 0) {
             if (self.rhsIndex > 0) {
                 self.rhsIndex -= 1;
-
-                // The decimal slices that we are given have been parsed before being seen
-                // by this function. That means we can safely assume the final character is not
-                // going to be a non-digit character and therefore we can -1 from the index without
-                // setting ourselves up for an out of bounds error.
                 if (self.rhs[self.rhsIndex] < '0' or self.rhs[self.rhsIndex] > '9') {
                     self.rhsIndex -= 1;
                 }
@@ -367,8 +370,6 @@ const SliceIterator = struct {
 // Adds the value of other into self.
 // Both self and other might be reallocated to new memory by this function.
 pub fn add(self: *Self, allocator: std.mem.Allocator, other: *const Self) void {
-    std.log.info("\n>> add {s} to {s}", .{ other.source, self.source });
-
     defer {
         // Skip over zeroes
         var available: u32 = 0;
@@ -750,22 +751,25 @@ test "adds two negative integers" {
     try std.testing.expect(!a.positive);
 }
 
-// test "adds two negative decimals" {
-//     const a = try Self.init(std.testing.allocator, "-8.7", null);
-//     const b = try Self.init(std.testing.allocator, "-3.2", null);
-//     defer a.deinit(std.testing.allocator);
-//     defer b.deinit(std.testing.allocator);
+test "adds two negative decimals" {
+    std.testing.log_level = .debug;
 
-//     try std.testing.expectEqual(@as(u32, 2), a.digits);
-//     try std.testing.expectEqual(@as(u32, 1), a.fractional);
+    const a = try Self.initAlloc(std.testing.allocator, "-08.70", null);
+    defer a.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u32, 3), a.digits);
+    try std.testing.expectEqual(@as(u32, 2), a.fractional);
+    try std.testing.expectEqualSlices(u8, "000870", a.source);
 
-//     a.add(std.testing.allocator, b);
+    var bSource = "-3.2".*;
+    const b = try Self.init(&bSource, null);
 
-//     try std.testing.expectEqual(@as(u32, 3), a.digits);
-//     try std.testing.expectEqual(@as(u32, 1), a.fractional);
-//     try std.testing.expect(!a.positive);
-//     try std.testing.expectEqualSlices(u8, "0119", a.source);
-// }
+    a.add(std.testing.allocator, &b);
+
+    try std.testing.expectEqual(@as(u32, 4), a.digits);
+    try std.testing.expectEqual(@as(u32, 2), a.fractional);
+    try std.testing.expect(!a.positive);
+    try std.testing.expectEqualSlices(u8, "001190", a.source);
+}
 
 // test "adds integers of opposite signs" {
 //     const a = try Self.init(std.testing.allocator, "4", null);
