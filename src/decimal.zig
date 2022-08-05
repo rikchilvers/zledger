@@ -278,7 +278,34 @@ pub fn expand(self: *Self, allocator: std.mem.Allocator, nDigits: u32, nFraction
     }
 }
 
-const SliceIterator = struct {
+const DecimalIterator = struct {
+    lhs: []u8,
+    rhs: []u8,
+    lhsIndex: usize,
+    rhsIndex: usize,
+    lhsComplete: bool,
+    rhsComplete: bool,
+
+    pub fn init(lhs: []u8, rhs: []u8) DecimalIterator {
+        return .{
+            .lhs = lhs,
+            .rhs = rhs,
+            .lhsIndex = 0,
+            .rhsIndex = 0,
+            .lhsComplete = false,
+            .rhsComplete = false,
+        };
+    }
+
+    pub fn next(self: *DecimalIterator, lhsIndex: *?usize, rhsIndex: *?usize) bool {
+        _ = self;
+        _ = lhsIndex;
+        _ = rhsIndex;
+        return false;
+    }
+};
+
+const ReverseDecimalIterator = struct {
     lhs: []u8,
     rhs: []u8,
     lhsIndex: usize,
@@ -287,8 +314,8 @@ const SliceIterator = struct {
     rhsComplete: bool,
     fractionalDifference: i64,
 
-    // The fractionalDifference is a.fractional - b.fractional
-    pub fn init(lhs: []u8, rhs: []u8, fractionalDifference: i64) SliceIterator {
+    // The fractionalDifference is lhs.fractional - rhs.fractional
+    pub fn init(lhs: []u8, rhs: []u8, fractionalDifference: i64) ReverseDecimalIterator {
         return .{
             .lhs = lhs,
             .rhs = rhs,
@@ -303,7 +330,7 @@ const SliceIterator = struct {
     // Given that the slices provided might be of different lengths, this iterator
     // works from back-to-front, setting the passed pointers to the current value
     // of the indices or null if there is no digit in that place value.
-    pub fn next(self: *SliceIterator, lhsIndex: *?usize, rhsIndex: *?usize) bool {
+    pub fn next(self: *ReverseDecimalIterator, lhsIndex: *?usize, rhsIndex: *?usize) bool {
         // We track this because advancing lhs and rhs independently relies on knowing the current value.
         var fdChange: i64 = 0;
         defer self.fractionalDifference += fdChange;
@@ -399,7 +426,8 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *const Self) void {
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
         const fractionalDifference: i64 = @as(i64, self.fractional) - @as(i64, other.fractional);
-        var iter = SliceIterator.init(self.source, other.source, fractionalDifference);
+        // FIXME: We might be able to pass self.source[available..] here instead and reduce some iterations
+        var iter = ReverseDecimalIterator.init(self.source, other.source, fractionalDifference);
         while (iter.next(&lhsIndex, &rhsIndex)) {
             const lhs = if (lhsIndex) |idx| self.source[idx] else '0';
             const rhs = if (rhsIndex) |idx| other.source[idx] else '0';
@@ -419,35 +447,82 @@ pub fn add(self: *Self, allocator: std.mem.Allocator, other: *const Self) void {
         // Handle left over carried value
         self.source[lhsIndex.?] = carry + 48;
     } else {
-        var lhs = self.source[available..];
-        var rhs = other.source;
-        std.debug.assert(std.mem.len(lhs) == std.mem.len(rhs));
+        var lhsSource: []u8 = undefined; // self.source[available..];
+        var rhsSource: []u8 = undefined; // other.source;
+
+        if (lessThan(self, other)) {
+            std.log.info("swapping", .{});
+            lhsSource = other.source;
+            rhsSource = self.source[available..];
+            self.positive = !self.positive;
+        } else {
+            std.log.info("unchanged", .{});
+            lhsSource = self.source[available..];
+            rhsSource = other.source;
+        }
 
         var borrow: u8 = 0;
-        var i = totalDigits - 1;
 
-        if (std.mem.lessThan(u8, lhs, rhs)) {
-            lhs = other.source;
-            rhs = self.source[available..];
-            self.positive = !self.positive;
-        }
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
+        const fractionalDifference: i64 = @as(i64, self.fractional) - @as(i64, other.fractional);
+        var iter = ReverseDecimalIterator.init(lhsSource, rhsSource, fractionalDifference);
+        while (iter.next(&lhsIndex, &rhsIndex)) {
+            var lhs: u8 = undefined;
+            var rhs: u8 = undefined;
+            var idx: usize = undefined;
 
-        while (i >= 0) {
-            // We have to cast here because the subtractions happen before the cast,
-            // i.e. lhs[i] is a u8 which could overflow when subtracting rhs[i] (another u8).
-            const x: i16 = @as(i16, lhs[i]) - @as(i16, rhs[i]) - borrow;
-            if (x < 0) {
-                self.source[i] = @intCast(u8, x + 48 + 10);
-                borrow = 1;
+            if (self.source.ptr == lhsSource.ptr) {
+                // swapped
+                std.log.info("sources unchanged", .{});
+                lhs = if (lhsIndex) |i| self.source[i] else '0';
+                rhs = if (rhsIndex) |i| other.source[i] else '0';
+                idx = lhsIndex.?;
             } else {
-                self.source[i] = @intCast(u8, x + 48);
-                borrow = 0;
+                std.log.info("sources swapped", .{});
+                lhs = if (lhsIndex) |i| other.source[i] else '0';
+                rhs = if (rhsIndex) |i| self.source[i] else '0';
+                idx = rhsIndex.?;
             }
 
-            if (i == 0) break;
-            i -= 1;
+            std.log.info("do something with {c} and {c}", .{ lhs, rhs });
+
+            // We have to cast here because the subtractions happen before the cast,
+            // i.e. lhs[i] is a u8 which could overflow when subtracting rhs[i] (another u8).
+            const x: i16 = @as(i16, lhs) - @as(i16, rhs) - borrow;
+            if (x < 0) {
+                self.source[idx] = @intCast(u8, x + 48 + 10);
+                borrow = 1;
+            } else {
+                self.source[idx] = @intCast(u8, x + 48);
+                borrow = 0;
+            }
         }
     }
+}
+
+fn order(lhs: *Self, rhs: *const Self) std.math.Order {
+    if (lhs.digits - lhs.fractional > rhs.digits - rhs.fractional) return .gt;
+    if (lhs.digits - lhs.fractional < rhs.digits - rhs.fractional) return .lt;
+
+    // var lhsIdx: ?usize = 0;
+    // while (true) : (lhsIdx.? += 1) if (lhs.source[lhsIdx.?] != '0') break;
+
+    // var rhsIdx: ?usize = 0;
+    // while (true) : (rhsIdx.? += 1) if (rhs.source[rhsIdx.?] != '0') break;
+
+    // while (true) {
+    //     if (lhsIdx)
+
+    //     const l = if (lhsIdx) |idx| lhs.source[idx] else '0';
+    //     const r = if (rhsIdx) |idx| rhs.source[idx] else '0';
+    // }
+
+    return .eq;
+}
+
+fn lessThan(lhs: *Self, rhs: *const Self) bool {
+    return order(lhs, rhs) == .lt;
 }
 
 test "init works" {
@@ -752,8 +827,6 @@ test "adds two negative integers" {
 }
 
 test "adds two negative decimals" {
-    std.testing.log_level = .debug;
-
     const a = try Self.initAlloc(std.testing.allocator, "-08.70", null);
     defer a.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u32, 3), a.digits);
@@ -771,32 +844,34 @@ test "adds two negative decimals" {
     try std.testing.expectEqualSlices(u8, "001190", a.source);
 }
 
-// test "adds integers of opposite signs" {
-//     const a = try Self.init(std.testing.allocator, "4", null);
-//     const b = try Self.init(std.testing.allocator, "-6", null);
-//     defer a.deinit(std.testing.allocator);
-//     defer b.deinit(std.testing.allocator);
+test "adds integers of opposite signs" {
+    std.testing.log_level = .debug;
 
-//     a.add(std.testing.allocator, b);
+    const a = try Self.initAlloc(std.testing.allocator, "47", null);
+    defer a.deinit(std.testing.allocator);
 
-//     try std.testing.expectEqualSlices(u8, "02", a.source);
-//     try std.testing.expect(!a.positive);
-// }
+    var bSource = "-62".*;
+    const b = try Self.init(&bSource, null);
 
-// test "adds decimals of opposite signs" {
-//     const a = try Self.init(std.testing.allocator, "18.2", null);
-//     defer a.deinit(std.testing.allocator);
-//     try std.testing.expectEqualSlices(u8, "0182", a.source);
+    a.add(std.testing.allocator, &b);
 
-//     const b = try Self.init(std.testing.allocator, "-6.38", null);
-//     defer b.deinit(std.testing.allocator);
-//     try std.testing.expectEqualSlices(u8, "00638", b.source);
+    try std.testing.expectEqualSlices(u8, "015", a.source);
+    try std.testing.expectEqual(false, a.positive);
+}
 
-//     a.add(std.testing.allocator, b);
+test "adds decimals of opposite signs" {
+    const a = try Self.initAlloc(std.testing.allocator, "18.2", null);
+    defer a.deinit(std.testing.allocator);
 
-//     try std.testing.expectEqualSlices(u8, "01182", a.source);
-//     try std.testing.expect(a.positive);
-// }
+    var bSource = "-6.38".*;
+    const b = try Self.init(&bSource, null);
+
+    a.add(std.testing.allocator, &b);
+
+    std.log.info("a source = {c}", .{a.source});
+    try std.testing.expectEqualSlices(u8, "01182", a.source);
+    try std.testing.expect(a.positive);
+}
 
 test "adding multiple times" {
     var sum = try Self.initAlloc(std.testing.allocator, "0", null);

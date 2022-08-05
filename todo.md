@@ -1,0 +1,2 @@
+- [ ] Error if decimal ends with a decimal point
+- [ ] Test for correct errors in something like 0,000,134

@@ -111,7 +111,7 @@ const Parser = struct {
                     break;
                 },
                 else => {
-                    _ = p.nextToken();
+                    p.findNextBlock();
                 },
             }
         }
@@ -221,7 +221,9 @@ const Parser = struct {
 
     fn expectPosting(p: *Parser, header_index: Node.Index) !Node.Index {
         // p.eatComments();
+
         _ = try p.expectToken(.indentation);
+
         const account = try p.expectToken(.identifier);
         var commodity = p.eatToken(.identifier);
         const amount = p.eatToken(.amount);
@@ -315,16 +317,27 @@ const Parser = struct {
 };
 
 test "transaction decl and body" {
-    std.testing.log_level = .debug;
-    std.log.info("\n", .{});
-
     const source: [:0]const u8 = "2020-01-02 abc\n\ta:b   $1\n\tc:d";
     var tree = try parse(std.testing.allocator, source);
     defer tree.deinit(std.testing.allocator);
 
     try std.testing.expectEqualSlices(Node.Tag, &.{ .root, .transaction_declaration, .transaction_header, .transaction_body, .posting, .posting }, tree.nodes.items(.tag));
+}
 
-    // std.log.info("{}", .{tree.nodes.fields});
+test "multiple transactions" {
+    const source: [:0]const u8 =
+        \\2020-01-02  abc
+        \\  a:b   $1
+        \\  c:d
+        \\
+        \\2020-01-03 ! xyz
+        \\  e:f   $2
+        \\  c:d
+    ;
+    var tree = try parse(std.testing.allocator, source);
+    defer tree.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualSlices(Node.Tag, &.{ .root, .transaction_declaration, .transaction_header, .transaction_body, .posting, .posting, .transaction_declaration, .transaction_header, .transaction_body, .posting, .posting }, tree.nodes.items(.tag));
 }
 
 // test "postings" {

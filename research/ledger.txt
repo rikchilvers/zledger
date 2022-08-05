@@ -1,3 +1,11 @@
 2022-04-11 ! Test payee
-  an account  a comm   -10.00
+  account   £-1_00,00.01
+  another:account
+
+2022-04-12 ! Test payee
+  account   £-1000
+  another:account
+
+2022-04-11 ! Test payee
+  account   £-10000
   another:account

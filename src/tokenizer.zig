@@ -164,7 +164,7 @@ pub const Tokenizer = struct {
                 },
 
                 .amount => switch (c) {
-                    '0'...'9', '.' => {},
+                    '0'...'9', '.', ',' => {},
                     else => break,
                 },
 
@@ -283,9 +283,6 @@ fn testTokenize(source: [:0]const u8, expected_tokens: []const Token.Tag) !void 
     try std.testing.expectEqual(source.len, last_token.loc.start);
 }
 
-// std.testing.log_level = .debug;
-// std.log.info("\n", .{});
-
 test "keywords" {
     try testTokenize(" \naccount a:b:c", &.{ .keyword_account, .identifier });
     try testTokenize("apply tag abc\n", &.{ .keyword_apply_tag, .identifier });
@@ -339,4 +336,17 @@ test "transactions" {
         \\    d:e  $10
         \\    x:y  
     , &.{ .date, .identifier, .indentation, .identifier, .identifier, .amount, .indentation, .identifier });
+}
+
+test "multiple transactions" {
+    const source: [:0]const u8 =
+        \\2020-01-02  abc
+        \\  a:b   $1
+        \\  c:d
+        \\
+        \\2020-01-03  xyz
+        \\  e:f   $2
+        \\  c:d
+    ;
+    try testTokenize(source, &.{ .date, .identifier, .indentation, .identifier, .identifier, .amount, .indentation, .identifier, .date, .identifier, .indentation, .identifier, .identifier, .amount, .indentation, .identifier });
 }
