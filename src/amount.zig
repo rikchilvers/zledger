@@ -1,5 +1,5 @@
 const std = @import("std");
-const BigDecimal = @import("bigdecimal.zig");
+const BigDecimal = @import("big_decimal.zig");
 const Commodity = @import("commodity.zig");
 
 const Self = @This();

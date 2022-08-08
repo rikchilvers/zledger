@@ -3,7 +3,7 @@ const std = @import("std");
 // const Date = datetime.Date;
 
 const Decimal = @import("./decimal.zig");
-const BigDecimal = @import("./bigdecimal.zig");
+const BigDecimal = @import("./big_decimal.zig");
 
 const repetitions = 1_000_000;
 

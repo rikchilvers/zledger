@@ -5,7 +5,7 @@ const Allocator = std.mem.Allocator;
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
 const Token = @import("./tokenizer.zig").Token;
 
-const Tree = @import("./tree.zig");
+const Tree = @import("./ast.zig");
 const Node = Tree.Node;
 const TokenIndex = Tree.TokenIndex;
 

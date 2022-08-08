@@ -12,10 +12,10 @@ allPostings: *std.ArrayList(Posting),
 postings: std.ArrayList(usize),
 amount: Amount,
 
-pub fn init(allocator: std.mem.Allocator, name: []const u8, allPostings: *std.ArrayList(Posting)) Self {
+pub fn init(allocator: std.mem.Allocator, name: []const u8) Self {
     var self = .{
         .name = name,
-        .allPostings = allPostings,
+        .allPostings = undefined,
         .postings = std.ArrayList(usize).init(allocator),
         .amount = Amount.init(allocator),
     };
