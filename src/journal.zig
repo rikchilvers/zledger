@@ -1,168 +1,104 @@
 const Date = @import("datetime").Date;
 const std = @import("std");
-const BigDecimal = @import("bigdecimal.zig");
-
-// Transaction holds details about an individual transaction
-// type Transaction struct {
-// 	Date                    time.Time
-// 	State                   TransactionState
-// 	Payee                   string
-// 	Postings                []*Posting
-// 	postingWithElidedAmount *Posting
-// 	HeaderNote              string   // note in the header
-// 	Notes                   []string // notes under the header
-// }
-// pub const Transaction = struct {
-//     pub const State = enum { pending, cleared };
-
-//     date: Date,
-//     state: ?State,
-//     payee: []const u8,
-//     // posting
-// };
-
-pub const Transaction = struct {
-    postings: []Journal.Postings,
-};
-
-pub const Account = struct {
-    name: []const u8,
-    /// The Journal's list of all postings.
-    allPostings: *std.ArrayList(Posting),
-    /// Postings relevant to this account.
-    /// Indexes into the allPostings array.
-    postings: std.ArrayList(usize),
-
-    pub fn init(allocator: std.mem.Allocator, name: []const u8, allPostings: *std.ArrayList(Posting)) Account {
-        var self = .{
-            .name = name,
-            .allPostings = allPostings,
-            .postings = std.ArrayList(usize).init(allocator),
-        };
-        return self;
-    }
-
-    pub fn deinit(self: *Account) void {
-        self.postings.deinit();
-    }
-};
-
-pub const Posting = struct {};
-
-pub const Commodity = struct {};
-
-pub const Amount = struct {
-    quantity: BigDecimal,
-    commodity: Commodity,
-
-    pub fn init(allocator: std.mem.Allocator) Amount {
-        var self = .{
-            .quantity = BigDecimal.initAlloc(allocator),
-            .commodity = .{},
-        };
-
-        return self;
-    }
-};
+const Posting = @import("posting.zig");
+const Account = @import("account.zig");
 
 // Here's my thinking: for most commands, we don't need to create anything other than the account tree.
 
 // For the account tree:
 // - https://stackoverflow.com/a/28643465
 
-pub const Journal = struct {
-    const Self = @This();
+const Self = @This();
 
-    /// All the postings
-    const Postings = std.ArrayList(Posting);
+/// All the postings
+const Postings = std.ArrayList(Posting);
 
-    /// All the accounts
-    /// TODO: consider making this a MultiArrayList instead
-    const Accounts = std.ArrayList(Account);
-    /// Maps the accounts to an index of the accounts ArrayList
-    const AccountsMap = std.StringHashMap(usize);
-    /// Maps an index of the accounts ArrayList to an ArrayList of indexes to the same ArrayList (children)
-    const AccountChildren = std.AutoHashMap(usize, std.ArrayList(usize));
+/// All the accounts
+/// TODO: consider making this a MultiArrayList instead
+const Accounts = std.ArrayList(Account);
+/// Maps the accounts to an index of the accounts ArrayList
+const AccountsMap = std.StringHashMap(usize);
+/// Maps an index of the accounts ArrayList to an ArrayList of indexes to the same ArrayList (children)
+const AccountChildren = std.AutoHashMap(usize, std.ArrayList(usize));
 
-    allocator: std.mem.Allocator,
+allocator: std.mem.Allocator,
 
-    postings: Postings,
+postings: Postings,
 
-    accounts: Accounts,
-    accounts_map: AccountsMap,
-    account_children: AccountChildren,
+accounts: Accounts,
+accounts_map: AccountsMap,
+account_children: AccountChildren,
 
-    pub fn init(allocator: std.mem.Allocator) Self {
-        return .{
-            .allocator = allocator,
-            .postings = Postings.init(allocator),
-            .accounts = Accounts.init(allocator),
-            .accounts_map = AccountsMap.init(allocator),
-            .account_children = AccountChildren.init(allocator),
-        };
+pub fn init(allocator: std.mem.Allocator) Self {
+    return .{
+        .allocator = allocator,
+        .postings = Postings.init(allocator),
+        .accounts = Accounts.init(allocator),
+        .accounts_map = AccountsMap.init(allocator),
+        .account_children = AccountChildren.init(allocator),
+    };
+}
+
+pub fn deinit(self: *Self) void {
+    self.postings.deinit();
+
+    for (self.accounts.items) |*account| account.deinit(self.allocator);
+    self.accounts.deinit();
+
+    self.accounts_map.deinit();
+
+    var iter = self.account_children.valueIterator();
+    while (iter.next()) |child_list| child_list.deinit();
+    self.account_children.deinit();
+}
+
+/// Account names are case sensitive.
+/// Returns the index into Journal's accounts ArrayList.
+pub fn addAccount(self: *Self, account_path: []const u8) !usize {
+    // TODO: handle this case: 'a:b:'. Should have accounts: 'a' and 'a:b:', not 'a', 'a:b' and 'a:b:'.
+
+    // For the account_path a:b:c, we want to add three accounts:
+    //      a
+    //      a:b
+    //      a:b:c
+
+    // If we already have this account path stored, just return it.
+    if (self.accounts_map.contains(account_path)) return self.accounts_map.get(account_path).?;
+
+    // Add full path
+    const account_index = std.mem.len(self.accounts.items);
+    var account = Account.init(self.allocator, account_path, &self.postings);
+    try self.accounts.append(account);
+    try self.accounts_map.put(account_path, account_index);
+
+    // Add parent, if there is one
+    if (std.mem.lastIndexOf(u8, account_path, ":")) |index| {
+        var parent = self.addAccount(account_path[0..index]) catch unreachable;
+
+        // Add full path as parent
+        var entry = try self.account_children.getOrPut(parent);
+        if (!entry.found_existing) entry.value_ptr.* = std.ArrayList(usize).init(self.allocator);
+        try entry.value_ptr.append(account_index);
     }
 
-    pub fn deinit(self: *Self) void {
-        self.postings.deinit();
+    return account_index;
+}
 
-        for (self.accounts.items) |*account| account.deinit();
-        self.accounts.deinit();
+/// Returned pointer will become invalid when the backing Arraylist is resized.
+pub fn getAccount(self: *Self, account_path: []const u8) ?*Account {
+    if (self.accounts_map.get(account_path)) |index| return &self.accounts.items[index];
+    return null;
+}
 
-        self.accounts_map.deinit();
-
-        var iter = self.account_children.valueIterator();
-        while (iter.next()) |child_list| child_list.deinit();
-        self.account_children.deinit();
-    }
-
-    /// Account names are case sensitive.
-    /// Returns the index into Journal's accounts ArrayList.
-    pub fn addAccount(self: *Self, account_path: []const u8) !usize {
-        // TODO: handle this case: 'a:b:'. Should have accounts: 'a' and 'a:b:', not 'a', 'a:b' and 'a:b:'.
-
-        // For the account_path a:b:c, we want to add three accounts:
-        //      a
-        //      a:b
-        //      a:b:c
-
-        // If we already have this account path stored, just return it.
-        if (self.accounts_map.contains(account_path)) return self.accounts_map.get(account_path).?;
-
-        // Add full path
-        const account_index = std.mem.len(self.accounts.items);
-        var account = Account.init(self.allocator, account_path, &self.postings);
-        try self.accounts.append(account);
-        try self.accounts_map.put(account_path, account_index);
-
-        // Add parent, if there is one
-        if (std.mem.lastIndexOf(u8, account_path, ":")) |index| {
-            var parent = self.addAccount(account_path[0..index]) catch unreachable;
-
-            // Add full path as parent
-            var entry = try self.account_children.getOrPut(parent);
-            if (!entry.found_existing) entry.value_ptr.* = std.ArrayList(usize).init(self.allocator);
-            try entry.value_ptr.append(account_index);
-        }
-
-        return account_index;
-    }
-
-    /// Returned pointer will become invalid when the backing Arraylist is resized.
-    pub fn getAccount(self: *Self, account_path: []const u8) ?*Account {
-        if (self.accounts_map.get(account_path)) |index| return &self.accounts.items[index];
-        return null;
-    }
-
-    pub fn addPosting(self: *Self, posting: Posting) !usize {
-        const index = std.mem.len(self.postings.items);
-        var p = try self.postings.addOne();
-        p.* = posting;
-        return index;
-    }
-};
+pub fn addPosting(self: *Self, posting: Posting) !usize {
+    const index = std.mem.len(self.postings.items);
+    var p = try self.postings.addOne();
+    p.* = posting;
+    return index;
+}
 
 test "adds and gets accounts" {
-    var journal = Journal.init(std.testing.allocator);
+    var journal = Self.init(std.testing.allocator);
     defer journal.deinit();
 
     _ = try journal.addAccount("a:b:c");
