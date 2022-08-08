@@ -1,2 +1,4 @@
-- [ ] Error if decimal ends with a decimal point
-- [ ] Test for correct errors in something like 0,000,134
+- [ ] Finish encapsulating BigDecimal
+- [ ] Amount = Quantity + Commodity
+      ledger/src/amount.cc:994 is where they parse amounts/commodities
+- [ ]
