@@ -35,6 +35,10 @@ pub fn build(b: *std.build.Builder) void {
     run_step.dependOn(&run_cmd.step);
 
     const exe_tests = b.addTest("src/tests.zig");
+    exe_tests.addIncludePath("./include");
+    exe_tests.linkLibC();
+    exe_tests.linkSystemLibrary("gmp");
+    exe_tests.linkSystemLibrary("mpfr");
     deps.addAllTo(exe_tests);
     exe_tests.setTarget(target);
     exe_tests.setBuildMode(mode);
