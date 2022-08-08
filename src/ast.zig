@@ -1,7 +1,7 @@
 //! Abstract Syntax Tree for Zig source code.
 
 /// Reference to externally-owned data.
-source: [:0]const u8,
+source: []const u8,
 
 tokens: TokenList.Slice,
 /// The root AST node is assumed to be index 0. Since there can be no

@@ -39,19 +39,19 @@ pub const Token = struct {
         end: usize,
     };
 
-    pub fn debug(self: Token, source: [:0]const u8) void {
+    pub fn debug(self: Token, source: []const u8) void {
         std.log.info("{s}: '{s}'", .{ self.tag, source[self.loc.start..self.loc.end] });
     }
 };
 
 pub const Tokenizer = struct {
-    buffer: [:0]const u8,
+    buffer: []const u8,
     index: usize,
     // FIXME: do we need this?
     pending_invalid_token: ?Token,
     last_newline: ?usize,
 
-    pub fn init(buffer: [:0]const u8) Tokenizer {
+    pub fn init(buffer: []const u8) Tokenizer {
         // Skip the UTF-8 BOM if present
         const src_start = if (std.mem.startsWith(u8, buffer, "\xEF\xBB\xBF")) 3 else @as(usize, 0);
         return Tokenizer{
@@ -88,12 +88,10 @@ pub const Tokenizer = struct {
         };
 
         var seen_spaces: usize = 0;
-        while (true) : (self.index += 1) {
+        while (self.index < self.buffer.len) : (self.index += 1) {
             const c = self.buffer[self.index];
             switch (state) {
                 .start => switch (c) {
-                    0 => break,
-
                     '\n', '\r' => {
                         self.last_newline = self.index;
                         seen_spaces = 0;
@@ -247,7 +245,7 @@ pub const Tokenizer = struct {
 
         // invalid tags run until the next double space or newline
         if (result.tag == .invalid) {
-            while (true) : (self.index += 1) {
+            while (self.index < self.buffer.len) : (self.index += 1) {
                 const c = self.buffer[self.index];
                 seen_spaces = 0;
                 switch (c) {
@@ -267,7 +265,7 @@ pub const Tokenizer = struct {
     }
 };
 
-fn testTokenize(source: [:0]const u8, expected_tokens: []const Token.Tag) !void {
+fn testTokenize(source: []const u8, expected_tokens: []const Token.Tag) !void {
     var tokenizer = Tokenizer.init(source);
     for (expected_tokens) |expected_token_id| {
         const token = tokenizer.next();
@@ -339,7 +337,7 @@ test "transactions" {
 }
 
 test "multiple transactions" {
-    const source: [:0]const u8 =
+    const source: []const u8 =
         \\2020-01-02  abc
         \\  a:b   $1
         \\  c:d

@@ -1,4 +1,5 @@
 const std = @import("std");
+const parse = @import("parser.zig").parse;
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -26,4 +27,6 @@ pub fn main() !void {
     );
 
     std.log.info("file:\n{s}", .{ptr});
+
+    _ = try parse(allocator, ptr);
 }

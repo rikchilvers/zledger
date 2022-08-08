@@ -13,14 +13,14 @@ pub const Error = error{ParseError} || Allocator.Error;
 
 const null_node: Node.Index = 0;
 
-pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!Tree {
+pub fn parse(gpa: Allocator, source: []const u8) Allocator.Error!Tree {
     var tokens = Tree.TokenList{};
     defer tokens.deinit(gpa);
 
     var tokenizer = Tokenizer.init(source);
     while (true) {
         const token = tokenizer.next();
-        std.log.info("tokenizer saw: {s}", .{token.tag});
+        // std.log.info("tokenizer saw: {s}", .{token.tag});
         try tokens.append(gpa, .{
             .tag = token.tag,
             .start = @intCast(u32, token.loc.start),
@@ -58,7 +58,7 @@ pub fn parse(gpa: Allocator, source: [:0]const u8) Allocator.Error!Tree {
 
     try parser.start();
 
-    std.log.info("node tags:\n", .{});
+    std.log.info("node tags:", .{});
     for (parser.nodes.items(.tag)) |tag| {
         std.log.info("{}", .{tag});
     }
@@ -92,7 +92,6 @@ const Parser = struct {
 
     fn start(p: *Parser) Allocator.Error!void {
         while (true) {
-            std.log.info("parser saw {s}", .{p.token_tags[p.token_index]});
             switch (p.token_tags[p.token_index]) {
                 .date => {
                     const xact = try p.expectTransactionRecoverable();
@@ -317,7 +316,7 @@ const Parser = struct {
 };
 
 test "transaction decl and body" {
-    const source: [:0]const u8 = "2020-01-02 abc\n\ta:b   $1\n\tc:d";
+    const source: []const u8 = "2020-01-02 abc\n\ta:b   $1\n\tc:d";
     var tree = try parse(std.testing.allocator, source);
     defer tree.deinit(std.testing.allocator);
 
@@ -325,7 +324,7 @@ test "transaction decl and body" {
 }
 
 test "multiple transactions" {
-    const source: [:0]const u8 =
+    const source: []const u8 =
         \\2020-01-02  abc
         \\  a:b   $1
         \\  c:d
