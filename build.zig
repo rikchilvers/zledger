@@ -15,7 +15,14 @@ pub fn build(b: *std.build.Builder) void {
     const exe = b.addExecutable("zledger", "src/main.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
-    deps.addAllTo(exe);
+
+    exe.addIncludePath("./include");
+
+    exe.linkLibC();
+    exe.linkSystemLibrary("gmp");
+    exe.linkSystemLibrary("mpfr");
+
+    // deps.addAllTo(exe);
     exe.install();
 
     const run_cmd = exe.run();
