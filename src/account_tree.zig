@@ -1,3 +1,6 @@
+// For the account tree:
+// - https://stackoverflow.com/a/28643465
+
 const std = @import("std");
 const Account = @import("account.zig");
 

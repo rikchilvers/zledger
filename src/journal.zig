@@ -4,11 +4,6 @@ const Posting = @import("posting.zig");
 const Account = @import("account.zig");
 const AccountTree = @import("account_tree.zig");
 
-// Here's my thinking: for most commands, we don't need to create anything other than the account tree.
-
-// For the account tree:
-// - https://stackoverflow.com/a/28643465
-
 const Self = @This();
 
 /// All the postings

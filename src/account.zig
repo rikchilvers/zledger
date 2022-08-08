@@ -12,6 +12,7 @@ allPostings: *std.ArrayList(Posting),
 postings: std.ArrayList(usize),
 amount: Amount,
 
+/// NOTE: The allPostings ptr must be set separately to this.
 pub fn init(allocator: std.mem.Allocator, name: []const u8) Self {
     var self = .{
         .name = name,
