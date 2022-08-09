@@ -40,13 +40,9 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 }
 
 // If self is 0, returns true.
-pub fn sign(self: Self) i2 {
-    switch (c.mpfr_sgn(&self.internal)) {
-        -1 => return -1,
-        0 => return 0,
-        1 => return 1,
-        else => unreachable,
-    }
+pub fn sign(self: Self) i1 {
+    if (c.mpfr_sgn(&self.internal) >= 0) return 1;
+    return -1;
 }
 
 pub fn set(self: *Self, value: []const u8) !void {
