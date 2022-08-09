@@ -5,16 +5,16 @@ const Allocator = std.mem.Allocator;
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
 const Token = @import("./tokenizer.zig").Token;
 
-const Tree = @import("./ast.zig");
-const Node = Tree.Node;
-const TokenIndex = Tree.TokenIndex;
+const Ast = @import("./ast.zig");
+const Node = Ast.Node;
+const TokenIndex = Ast.TokenIndex;
 
 pub const Error = error{ParseError} || Allocator.Error;
 
 const null_node: Node.Index = 0;
 
-pub fn parse(gpa: Allocator, source: []const u8) Allocator.Error!Tree {
-    var tokens = Tree.TokenList{};
+pub fn parse(gpa: Allocator, source: []const u8) Allocator.Error!Ast {
+    var tokens = Ast.TokenList{};
     defer tokens.deinit(gpa);
 
     var tokenizer = Tokenizer.init(source);
@@ -31,7 +31,7 @@ pub fn parse(gpa: Allocator, source: []const u8) Allocator.Error!Tree {
     var parser: Parser = .{
         .gpa = gpa,
         .source = source,
-        .errors = std.ArrayList(Tree.Error).init(gpa),
+        .errors = std.ArrayList(Ast.Error).init(gpa),
         .nodes = .{},
         .scratch = std.ArrayList(Node.Index).init(gpa),
         .extra_data = std.ArrayList(Node.Index).init(gpa),
@@ -58,12 +58,7 @@ pub fn parse(gpa: Allocator, source: []const u8) Allocator.Error!Tree {
 
     try parser.start();
 
-    std.log.info("node tags:", .{});
-    for (parser.nodes.items(.tag)) |tag| {
-        std.log.info("{}", .{tag});
-    }
-
-    return Tree{
+    return Ast{
         .source = source,
         .tokens = tokens.toOwnedSlice(),
         .nodes = parser.nodes.toOwnedSlice(),
@@ -76,17 +71,17 @@ pub fn parse(gpa: Allocator, source: []const u8) Allocator.Error!Tree {
 const Parser = struct {
     gpa: Allocator,
     source: []const u8,
-    errors: std.ArrayList(Tree.Error),
-    nodes: Tree.NodeList,
+    errors: std.ArrayList(Ast.Error),
+    nodes: Ast.NodeList,
     /// Additional information associated with a Node (e.g. postings for a transaction)
-    /// Use Tree.extraData() to extra the data
+    /// Use Ast.extraData() to extra the data
     extra_data: std.ArrayList(Node.Index),
     /// Used to transiently hold references to Node.Indexes as the parser works
     scratch: std.ArrayList(Node.Index),
 
     /// token_tags.len == token_starts.len as they're the deconstructed results of tokenization
     token_tags: []const Token.Tag,
-    token_starts: []const Tree.ByteOffset,
+    token_starts: []const Ast.ByteOffset,
     /// the index to the current token that the parser is looking at (starting at 0)
     token_index: TokenIndex,
 
@@ -116,13 +111,13 @@ const Parser = struct {
         }
     }
 
-    fn addNode(p: *Parser, elem: Tree.NodeList.Elem) Allocator.Error!Node.Index {
+    fn addNode(p: *Parser, elem: Ast.NodeList.Elem) Allocator.Error!Node.Index {
         const result = @intCast(Node.Index, p.nodes.len);
         try p.nodes.append(p.gpa, elem);
         return result;
     }
 
-    fn setNode(p: *Parser, i: usize, elem: Tree.NodeList.Elem) Node.Index {
+    fn setNode(p: *Parser, i: usize, elem: Ast.NodeList.Elem) Node.Index {
         p.nodes.set(i, elem);
         return @intCast(Node.Index, i);
     }
@@ -279,7 +274,7 @@ const Parser = struct {
         return p.nextToken();
     }
 
-    fn recordError(p: *Parser, msg: Tree.Error) error{OutOfMemory}!void {
+    fn recordError(p: *Parser, msg: Ast.Error) error{OutOfMemory}!void {
         switch (msg.tag) {
             .expected_token, .expected_transaction => if (msg.token != 0 and !p.tokensOnSameLine(msg.token - 1, msg.token)) {
                 var copy = msg;
@@ -296,7 +291,7 @@ const Parser = struct {
         return std.mem.indexOfScalar(u8, p.source[p.token_starts[token1]..p.token_starts[token2]], '\n') == null;
     }
 
-    fn fail(p: *Parser, msg: Tree.Error) error{ ParseError, OutOfMemory } {
+    fn fail(p: *Parser, msg: Ast.Error) error{ ParseError, OutOfMemory } {
         try p.recordError(msg);
         return error.ParseError;
     }
