@@ -24,6 +24,7 @@ pub fn parse(gpa: Allocator, source: []const u8) Allocator.Error!Ast {
         try tokens.append(gpa, .{
             .tag = token.tag,
             .start = @intCast(u32, token.loc.start),
+            // we can compute the end with: tokens[current + 1].start - 1
         });
         if (token.tag == .eof) break;
     }
@@ -97,9 +98,6 @@ const Parser = struct {
                         });
                         continue;
                     }
-
-                    // parse the postings
-                    // add start/finish indices to the node
                 },
                 .eof => {
                     break;
@@ -200,10 +198,17 @@ const Parser = struct {
             last_posting = posting;
         }
 
-        return p.setNode(index, .{ .tag = .transaction_body, .main_token = 0, .data = .{
-            .lhs = first_posting,
-            .rhs = last_posting,
-        } });
+        return p.setNode(
+            index,
+            .{
+                .tag = .transaction_body,
+                .main_token = 0,
+                .data = .{
+                    .lhs = first_posting,
+                    .rhs = last_posting,
+                },
+            },
+        );
     }
 
     fn expectPostingRecoverable(p: *Parser, body_index: Node.Index) !Node.Index {

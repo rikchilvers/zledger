@@ -1,11 +1,11 @@
 2022-04-11 ! Test payee
-  account   £-100,000.01
-  another:account
+  account   £-10.01
+  another:account   £10.01
 
 2022-04-12 ! Test payee
-  account   £-1000
-  another:account
+  account
+  another:account   £10
 
 2022-04-11 ! Test payee
-  account   £-10000
-  :another:Account
+  account   £-100
+  another:account
