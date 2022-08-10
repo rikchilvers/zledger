@@ -191,7 +191,7 @@ pub const Tokenizer = struct {
                 },
 
                 .identifier => switch (c) {
-                    0, '0'...'9', '\n', '\r' => break,
+                    0, '0'...'9', '\n', '\r', '+', '-' => break,
                     ' ', '\t' => {
                         // this could be a keyword if it begins at the start of the line
                         const from_beginning = blk: {
