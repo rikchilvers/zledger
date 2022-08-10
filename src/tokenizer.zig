@@ -48,7 +48,6 @@ pub const Tokenizer = struct {
     buffer: []const u8,
     index: usize,
     // FIXME: do we need this?
-    pending_invalid_token: ?Token,
     last_newline: ?usize,
 
     pub fn init(buffer: []const u8) Tokenizer {
@@ -57,7 +56,6 @@ pub const Tokenizer = struct {
         return Tokenizer{
             .buffer = buffer,
             .index = src_start,
-            .pending_invalid_token = null,
             .last_newline = null,
         };
     }
@@ -74,10 +72,6 @@ pub const Tokenizer = struct {
     };
 
     pub fn next(self: *Tokenizer) Token {
-        if (self.pending_invalid_token) |token| {
-            self.pending_invalid_token = null;
-            return token;
-        }
         var state: State = .start;
         var result = Token{
             .tag = .eof,
@@ -235,11 +229,6 @@ pub const Tokenizer = struct {
         }
 
         if (result.tag == .eof) {
-            // FIXME: we're not using this - should it be removed?
-            if (self.pending_invalid_token) |token| {
-                self.pending_invalid_token = null;
-                return token;
-            }
             result.loc.start = self.index;
         }
 
