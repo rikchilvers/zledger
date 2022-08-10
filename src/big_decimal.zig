@@ -46,9 +46,9 @@ pub fn sign(self: Self) i1 {
 }
 
 pub fn set(self: *Self, value: []const u8) !void {
-    const v = @ptrCast([*c]const u8, value);
-    // std.log.info("setting to {s}", .{v});
-    if (c.mpfr_set_str(&self.internal, v, 10, c.MPFR_RNDD) != 0) return Error.mpfr;
+    // NOTE: We're ignoring the error reporting mpfr offers us here by passing null as
+    // the third parameter.
+    _ = c.mpfr_strtofr(&self.internal, value.ptr, null, 10, c.MPFR_RNDN);
 }
 
 pub fn add(self: *Self, addend: *Self) void {
