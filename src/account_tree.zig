@@ -23,6 +23,12 @@ pub fn init(allocator: std.mem.Allocator) !Self {
         .account_children = std.AutoHashMap(usize, std.ArrayList(usize)).init(allocator),
     };
 
+    const path = "root";
+    var root = Account.init(allocator, path);
+    try self.accounts.append(root);
+    try self.accounts_map.put(path, 0);
+    try self.account_children.put(0, std.ArrayList(usize).init(self.allocator));
+
     return self;
 }
 
@@ -74,6 +80,9 @@ pub fn addAccount(self: *Self, account_path: []const u8) !usize {
         var entry = try self.account_children.getOrPut(parent);
         if (!entry.found_existing) entry.value_ptr.* = std.ArrayList(usize).init(self.allocator);
         try entry.value_ptr.append(account_index);
+    } else {
+        var root_children = self.account_children.getPtr(0).?;
+        try root_children.append(account_index);
     }
 
     return account_index;
@@ -92,7 +101,8 @@ test "adds and gets accounts" {
     _ = try tree.addAccount("a:b:c");
     _ = try tree.addAccount("a:d");
 
-    try std.testing.expectEqual(@as(usize, 4), std.mem.len(tree.accounts.items));
+    // We expect 5 because of the root
+    try std.testing.expectEqual(@as(usize, 5), std.mem.len(tree.accounts.items));
 
     const account_a = tree.getAccount("a");
     try std.testing.expectEqualSlices(u8, "a", account_a.?.name);
