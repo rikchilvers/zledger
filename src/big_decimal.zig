@@ -30,6 +30,7 @@ pub fn initAlloc(allocator: std.mem.Allocator) *Self {
     self.internal = undefined;
 
     c.mpfr_init2(&self.internal, Precision);
+    _ = c.mpfr_strtofr(&self.internal, "0.0", null, 10, c.MPFR_RNDN);
 
     return self;
 }
