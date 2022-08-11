@@ -1,4 +1,8 @@
-# Goal
+# pta - plain text accounting
+
+Not quite a rewrite of (h)ledger in zig.
+
+## Goal
 
 `zledger budget`:
 
