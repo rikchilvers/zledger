@@ -28,6 +28,6 @@ pub fn main() !void {
     );
 
     const ast = try parse(allocator, ptr);
-    var journal = Journal.init(allocator);
+    var journal = try Journal.init(allocator);
     try journal.read(ast);
 }

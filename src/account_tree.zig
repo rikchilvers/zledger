@@ -6,27 +6,24 @@ const Account = @import("account.zig");
 
 const Self = @This();
 
+allocator: std.mem.Allocator,
 /// All the accounts
 /// TODO: consider making this a MultiArrayList instead
-const Accounts = std.ArrayList(Account);
+accounts: std.ArrayList(Account),
 /// Maps the accounts to an index of the accounts ArrayList
-const AccountsMap = std.StringHashMap(usize);
-/// Maps an index of the accounts ArrayList to an ArrayList of indexes to the same ArrayList (children)
-const AccountChildren = std.AutoHashMap(usize, std.ArrayList(usize));
+accounts_map: std.StringHashMap(usize),
+/// Maps an index of the accounts ArrayList to an ArrayList of indices to the same ArrayList (children)
+account_children: std.AutoHashMap(usize, std.ArrayList(usize)),
 
-allocator: std.mem.Allocator,
-
-accounts: Accounts,
-accounts_map: AccountsMap,
-account_children: AccountChildren,
-
-pub fn init(allocator: std.mem.Allocator) Self {
-    return .{
+pub fn init(allocator: std.mem.Allocator) !Self {
+    var self = .{
         .allocator = allocator,
-        .accounts = Accounts.init(allocator),
-        .accounts_map = AccountsMap.init(allocator),
-        .account_children = AccountChildren.init(allocator),
+        .accounts = std.ArrayList(Account).init(allocator),
+        .accounts_map = std.StringHashMap(usize).init(allocator),
+        .account_children = std.AutoHashMap(usize, std.ArrayList(usize)).init(allocator),
     };
+
+    return self;
 }
 
 pub fn deinit(self: *Self) void {
@@ -89,7 +86,7 @@ pub fn getAccount(self: *Self, account_path: []const u8) ?*Account {
 }
 
 test "adds and gets accounts" {
-    var tree = Self.init(std.testing.allocator);
+    var tree = try Self.init(std.testing.allocator);
     defer tree.deinit();
 
     _ = try tree.addAccount("a:b:c");

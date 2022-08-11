@@ -14,12 +14,13 @@ allocator: std.mem.Allocator,
 postings: Postings,
 account_tree: AccountTree,
 
-pub fn init(allocator: std.mem.Allocator) Self {
-    return .{
+pub fn init(allocator: std.mem.Allocator) !Self {
+    var self = .{
         .allocator = allocator,
         .postings = Postings.init(allocator),
-        .account_tree = AccountTree.init(allocator),
+        .account_tree = try AccountTree.init(allocator),
     };
+    return self;
 }
 
 pub fn deinit(self: *Self) void {
