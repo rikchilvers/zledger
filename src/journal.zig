@@ -29,46 +29,30 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn read(self: *Self, ast: Ast) !void {
-    _ = self;
-
-    var sum = BigDecimal.initAlloc(self.allocator);
-    try sum.set("0.0");
-
     var temp = BigDecimal.initAlloc(self.allocator);
     try temp.set("0.0");
 
-    std.log.info("node tags:", .{});
     for (ast.nodes.items(.tag)) |tag, i| {
         switch (tag) {
+            .root => {},
             .transaction_declaration => {
                 const main_token_index = ast.nodes.items(.main_token)[i];
 
                 const token_start = ast.tokens.items(.start)[main_token_index];
                 const token_end = ast.tokens.items(.start)[main_token_index + 1];
                 const token = ast.source[token_start .. token_end - 1];
-
-                std.log.info("xact date = '{s}'", .{token});
+                _ = token;
             },
             .posting => {
-                const dataIndex = ast.nodes.items(.data)[i].rhs;
-                const extra = Ast.extraData(ast, dataIndex, Ast.Node.Posting).amount;
+                const account_path = extractAccount(&ast, i);
+                const account_index = try self.account_tree.addAccount(account_path);
+                const account = self.account_tree.accounts.items[account_index];
 
-                if (extra == 0) continue;
-
-                const token_start = ast.tokens.items(.start)[extra];
-                const token_end = ast.tokens.items(.start)[extra + 1];
-                var token = ast.source[token_start .. token_end - 1];
-
-                // Handle trailing characters in the token
-                if (std.mem.len(token) > 0) {
-                    if (token[std.mem.len(token) - 1] == '\n') {
-                        token = token[0 .. std.mem.len(token) - 1];
-                    }
+                const amount = extractAmount(&ast, i);
+                if (amount) |a| {
+                    try temp.set(a);
+                    account.amount.quantity.*.add(temp);
                 }
-
-                std.log.info("setting to '{s}'", .{token});
-                try temp.set(token);
-                sum.add(temp);
             },
             else => {
                 std.log.info("{d: >2}: {} = {s}", .{ i, tag, "???" });
@@ -76,10 +60,31 @@ pub fn read(self: *Self, ast: Ast) !void {
         }
     }
 
-    sum.print();
-    sum.deinit(self.allocator);
     temp.deinit(self.allocator);
     try BigDecimal.cleanUpMemory();
+}
+
+fn extractAccount(ast: *const Ast, token_index: usize) []const u8 {
+    const index = ast.nodes.items(.main_token)[token_index];
+    const start = ast.tokens.items(.start)[index];
+    const end = ast.tokens.items(.start)[index + 1];
+    // TODO: move this trim to the tokenizer
+    return std.mem.trimRight(u8, ast.source[start .. end - 1], " ");
+}
+
+fn extractAmount(ast: *const Ast, token_index: usize) ?[]const u8 {
+    const index = ast.nodes.items(.data)[token_index].rhs;
+    const extra = Ast.extraData(ast.*, index, Ast.Node.Posting).amount;
+
+    if (extra == 0) return null;
+
+    const start = ast.tokens.items(.start)[extra];
+    const end = ast.tokens.items(.start)[extra + 1];
+
+    // When the amount is in the final posting of a transaction, we can end up with a trailing
+    // new line char so we trim here.
+    // TODO: could this be handled in the tokenizer?
+    return std.mem.trimRight(u8, ast.source[start .. end - 1], " \n\r\t\x0A");
 }
 
 pub fn addPosting(self: *Self, posting: Posting) !usize {
@@ -87,4 +92,17 @@ pub fn addPosting(self: *Self, posting: Posting) !usize {
     var p = try self.postings.addOne();
     p.* = posting;
     return index;
+}
+
+test "reads accounts" {
+    const input = @import("tests.zig").TestString;
+    const parse = @import("parser.zig").parse;
+    const allocator = std.testing.allocator;
+
+    var ast = try parse(allocator, input);
+    defer ast.deinit(allocator);
+    var journal = try Self.init(allocator);
+    defer journal.deinit();
+
+    try journal.read(ast);
 }
