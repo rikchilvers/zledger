@@ -53,14 +53,24 @@ pub fn addAccount(self: *Self, account_path: []const u8) !usize {
     // If we already have this account path stored, just return it.
     if (self.accounts_map.contains(account_path)) return self.accounts_map.get(account_path).?;
 
+    // Extract tail
+    const last_colon = std.mem.lastIndexOf(u8, account_path, ":");
+    const name = blk: {
+        if (last_colon) |index| {
+            break :blk account_path[index + 1 ..];
+        } else {
+            break :blk account_path;
+        }
+    };
+
     // Add full path
     const account_index = std.mem.len(self.accounts.items);
-    var account = Account.init(self.allocator, account_path);
+    var account = Account.init(self.allocator, name);
     try self.accounts.append(account);
     try self.accounts_map.put(account_path, account_index);
 
     // Add parent, if there is one
-    if (std.mem.lastIndexOf(u8, account_path, ":")) |index| {
+    if (last_colon) |index| {
         var parent = self.addAccount(account_path[0..index]) catch unreachable;
 
         // Add full path as parent
