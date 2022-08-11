@@ -5,6 +5,8 @@ const Posting = @import("posting.zig");
 const Self = @This();
 
 name: []const u8,
+// Index into an AccountTree
+parent: usize,
 /// Postings relevant to this account.
 /// Indexes into the Journal's list of postings.
 postings: std.ArrayList(usize),
@@ -13,6 +15,7 @@ amount: Amount,
 pub fn init(allocator: std.mem.Allocator, name: []const u8) Self {
     var self = .{
         .name = name,
+        .parent = undefined,
         .postings = std.ArrayList(usize).init(allocator),
         .amount = Amount.init(allocator),
     };

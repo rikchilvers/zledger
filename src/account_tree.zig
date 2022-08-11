@@ -76,13 +76,21 @@ pub fn addAccount(self: *Self, account_path: []const u8) !usize {
     if (last_colon) |index| {
         var parent = self.addAccount(account_path[0..index]) catch unreachable;
 
-        // Add full path as parent
+        var child = &self.accounts.items[account_index];
+        child.parent = parent;
+
+        // Make the current account a child of the parent
         var entry = try self.account_children.getOrPut(parent);
         if (!entry.found_existing) entry.value_ptr.* = std.ArrayList(usize).init(self.allocator);
         try entry.value_ptr.append(account_index);
     } else {
+        // Add this account as a child of root
         var root_children = self.account_children.getPtr(0).?;
         try root_children.append(account_index);
+
+        // Make root the parent of this account
+        var child = &self.accounts.items[account_index];
+        child.parent = 0;
     }
 
     return account_index;
@@ -128,10 +136,13 @@ fn printChildren(self: *Self, account: usize, indent: u8, writer: anytype) void 
 }
 
 test "adds and gets accounts" {
+    std.testing.log_level = .debug;
+    std.log.info("", .{});
+
     var tree = try Self.init(std.testing.allocator);
     defer tree.deinit();
 
-    _ = try tree.addAccount("a:b:c");
+    const abc_index = try tree.addAccount("a:b:c");
     _ = try tree.addAccount("a:d");
 
     // We expect 5 because of the root
@@ -139,6 +150,9 @@ test "adds and gets accounts" {
 
     const account_a = tree.getAccount("a");
     try std.testing.expectEqualSlices(u8, "a", account_a.?.name);
+    try std.testing.expectEqual(@as(usize, 0), account_a.?.parent);
+
+    try std.testing.expectEqual(@as(usize, 2), tree.accounts.items[abc_index].parent);
 
     const a_index = tree.accounts_map.get("a").?;
     const children = tree.account_children.get(a_index).?;
