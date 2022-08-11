@@ -59,3 +59,9 @@ pub fn add(self: *Self, addend: *Self) void {
 pub fn print(self: *Self) void {
     _ = c.mpfr_printf("%.2Rf", &self.internal);
 }
+
+pub fn write(self: *Self, buffer: []u8) []u8 {
+    // TODO: this needs to construct the format string in line with the precision of the parsed value
+    const written_chars = c.mpfr_sprintf(buffer.ptr, "%.2Rf", &self.internal);
+    return buffer[0..@intCast(usize, written_chars)];
+}

@@ -30,4 +30,6 @@ pub fn main() !void {
     const ast = try parse(allocator, ptr);
     var journal = try Journal.init(allocator);
     try journal.read(ast);
+
+    journal.account_tree.toString();
 }

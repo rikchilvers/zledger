@@ -94,6 +94,39 @@ pub fn getAccount(self: *Self, account_path: []const u8) ?*Account {
     return null;
 }
 
+pub fn toString(self: *Self) void {
+    const unbuffered_out = std.io.getStdOut().writer();
+    var buffer = std.io.bufferedWriter(unbuffered_out);
+    var out = buffer.writer();
+
+    self.printChildren(0, 0, out);
+
+    buffer.flush() catch unreachable;
+}
+
+fn printChildren(self: *Self, account: usize, indent: u8, writer: anytype) void {
+    // TODO: consider moving this to self
+    var buf = [_]u8{0} ** 64;
+
+    var children = self.account_children.getPtr(account);
+    if (children == null) return;
+    for (children.?.items) |index| {
+        const child = self.accounts.items[index];
+
+        const out = child.amount.quantity.*.write(&buf);
+        writer.print("{s: >22}  ", .{out}) catch unreachable;
+
+        var i = indent;
+        while (i > 0) : (i -= 1) {
+            writer.print("  ", .{}) catch unreachable;
+        }
+
+        writer.print("{s}\n", .{child.name}) catch unreachable;
+
+        self.printChildren(index, indent + 1, writer);
+    }
+}
+
 test "adds and gets accounts" {
     var tree = try Self.init(std.testing.allocator);
     defer tree.deinit();
@@ -110,4 +143,17 @@ test "adds and gets accounts" {
     const a_index = tree.accounts_map.get("a").?;
     const children = tree.account_children.get(a_index).?;
     try std.testing.expectEqual(@as(usize, 2), std.mem.len(children.items));
+}
+
+test "prints tree" {
+    std.testing.log_level = .debug;
+    std.log.info("", .{});
+
+    var tree = try Self.init(std.testing.allocator);
+    defer tree.deinit();
+
+    _ = try tree.addAccount("a:b:c");
+    _ = try tree.addAccount("a:d");
+
+    tree.toString();
 }
