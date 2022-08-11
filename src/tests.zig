@@ -11,3 +11,5 @@ comptime {
     _ = @import("commodity.zig");
     _ = @import("transaction.zig");
 }
+
+pub const TestString = @embedFile("../tests/example.txt");
