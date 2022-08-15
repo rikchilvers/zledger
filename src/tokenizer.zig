@@ -10,11 +10,14 @@ pub const Token = struct {
     pub const keywords = std.ComptimeStringMap(Tag, .{
         .{ "account", .keyword_account },
         .{ "apply", .keyword_partial },
+        .{ "import", .keyword_import },
+        .{ "alias", .keyword_alias },
         .{ "apply account", .keyword_apply_account },
         .{ "apply tag", .keyword_apply_tag },
     });
 
     pub fn getKeyword(bytes: []const u8) ?Tag {
+        // std.log.info("checking", .{});
         return keywords.get(bytes);
     }
 
@@ -30,6 +33,8 @@ pub const Token = struct {
         keyword_partial,
         keyword_apply_account,
         keyword_apply_tag,
+        keyword_import,
+        keyword_alias,
         invalid,
         eof,
     };
@@ -40,14 +45,14 @@ pub const Token = struct {
     };
 
     pub fn debug(self: Token, source: []const u8) void {
-        std.log.info("{any}: '{any}'", .{ self.tag, source[self.loc.start..self.loc.end] });
+        std.log.info("{any}: '{s}'", .{ self.tag, source[self.loc.start..self.loc.end] });
     }
 };
 
 pub const Tokenizer = struct {
     buffer: []const u8,
     index: usize,
-    last_newline: ?usize,
+    last_newline: usize,
 
     pub fn init(buffer: []const u8) Tokenizer {
         // Skip the UTF-8 BOM if present
@@ -55,7 +60,7 @@ pub const Tokenizer = struct {
         return Tokenizer{
             .buffer = buffer,
             .index = src_start,
-            .last_newline = null,
+            .last_newline = src_start,
         };
     }
 
@@ -110,7 +115,7 @@ pub const Tokenizer = struct {
 
                     '0'...'9' => {
                         // are we at the start of a line?
-                        if (self.index == 0 or (self.index > 0 and (self.buffer[self.index - 1] == '\n' or self.buffer[self.index - 1] == 'r'))) {
+                        if (self.index == 0 or (self.index > 0 and (self.buffer[self.index - 1] == '\n' or self.buffer[self.index - 1] == '\r'))) {
                             state = .date;
                             result.tag = .date;
                         } else {
@@ -140,8 +145,21 @@ pub const Tokenizer = struct {
                         seen_spaces += if (c == ' ') 1 else transaction_indentation;
                     },
                     else => {
-                        const from_beginning = self.index <= (self.last_newline orelse 0) + seen_spaces + 1;
-                        if (from_beginning) {
+                        // We only care about indentation when it starts from the beginning of a line.
+                        // After that, it's not useful to output a token for it since it doesn't have meaning
+                        // in a ledger file.
+                        // During parsing, we can choose to ignore indentation that does not come after a transaction
+                        // declaration.
+
+                        // check if we've only seen whitespace on this line so far
+                        // FIXME: could we make this faster? is there a way of not having to backtrack like this?
+                        var cursor = self.index - 1;
+                        while (cursor > self.last_newline) : (cursor -= 1) {
+                            const char = self.buffer[cursor];
+                            if (char != '\t' and char != ' ') break;
+                        }
+
+                        if (cursor == self.last_newline) {
                             if (seen_spaces >= transaction_indentation) {
                                 result.tag = .indentation;
                                 break;
@@ -176,7 +194,7 @@ pub const Tokenizer = struct {
 
                 .date => switch (c) {
                     '/', '-', '.', '0'...'9' => {},
-                    ' ', '\t', '\n', '\r', 0 => break,
+                    ' ', '\t', '\n', '\r' => break,
                     else => {
                         result.tag = .invalid;
                         break;
@@ -184,26 +202,18 @@ pub const Tokenizer = struct {
                 },
 
                 .identifier => switch (c) {
-                    0, '0'...'9', '\n', '\r', '+', '-' => break,
+                    '0'...'9', '\n', '\r', '+', '-' => break,
                     ' ', '\t' => {
-                        // this could be a keyword if it begins at the start of the line
-                        const from_beginning = blk: {
-                            if (result.loc.start == 0) break :blk true;
-                            break :blk self.buffer[result.loc.start - 1] == '\n' or self.buffer[result.loc.start - 1] == '\r';
-                        };
-                        if (from_beginning) {
-                            if (Token.getKeyword(self.buffer[result.loc.start..self.index])) |tag| {
-                                if (tag == .keyword_partial) continue;
-                                result.tag = tag;
-                            } else {
-                                result.tag = .invalid;
-                            }
-                            break;
-                        }
-
                         seen_spaces += if (c == ' ') 1 else transaction_indentation;
                         if (seen_spaces >= max_spaces_in_identifier) {
                             self.index -= 1;
+                            break;
+                        }
+
+                        // FIXME: this will cause lots of checks against the map
+                        if (Token.getKeyword(self.buffer[result.loc.start..self.index])) |tag| {
+                            if (tag == .keyword_partial) continue;
+                            result.tag = tag;
                             break;
                         }
                     },
@@ -273,6 +283,8 @@ test "keywords" {
     try testTokenize(" \naccount a:b:c", &.{ .keyword_account, .identifier });
     try testTokenize("apply tag abc\n", &.{ .keyword_apply_tag, .identifier });
     try testTokenize("apply account abc\n", &.{ .keyword_apply_account, .identifier });
+    try testTokenize("import ./abc.ledger\n", &.{ .keyword_import, .identifier });
+    try testTokenize("\talias bloop \n", &.{ .indentation, .keyword_alias, .identifier });
 }
 
 test "dates" {
@@ -287,9 +299,11 @@ test "statuses" {
 }
 
 test "indentations and identifiers" {
+    try testTokenize(" abc", &.{.identifier});
     try testTokenize("  abc", &.{ .indentation, .identifier });
     try testTokenize("\txyz", &.{ .indentation, .identifier });
     try testTokenize(" \n    abc def", &.{ .indentation, .identifier });
+    try testTokenize("one long identifier  another one", &.{ .identifier, .identifier });
     try testTokenize(" \n\txyz", &.{ .indentation, .identifier });
 }
 
