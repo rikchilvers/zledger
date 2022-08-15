@@ -150,9 +150,9 @@ test "adds and gets accounts" {
 
     const account_a = tree.getAccount("a");
     try std.testing.expectEqualSlices(u8, "a", account_a.?.name);
-    try std.testing.expectEqual(@as(usize, 0), account_a.?.parent);
+    try std.testing.expectEqual(@as(usize, 0), account_a.?.parent.?);
 
-    try std.testing.expectEqual(@as(usize, 2), tree.accounts.items[abc_index].parent);
+    try std.testing.expectEqual(@as(usize, 2), tree.accounts.items[abc_index].parent.?);
 
     const a_index = tree.accounts_map.get("a").?;
     const children = tree.account_children.get(a_index).?;
