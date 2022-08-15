@@ -46,12 +46,12 @@ pub fn read(self: *Self, ast: Ast) !void {
             .posting => {
                 const account_path = extractAccount(&ast, i);
                 const account_index = try self.account_tree.addAccount(account_path);
-                const account = self.account_tree.accounts.items[account_index];
+                const account = &self.account_tree.accounts.items[account_index];
 
                 const amount = extractAmount(&ast, i);
                 if (amount) |a| {
                     try temp.set(a);
-                    account.amount.quantity.*.add(temp);
+                    account.addAmount(self.account_tree.accounts.items, temp);
                 }
             },
             else => {
