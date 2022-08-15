@@ -40,14 +40,13 @@ pub const Token = struct {
     };
 
     pub fn debug(self: Token, source: []const u8) void {
-        std.log.info("{s}: '{s}'", .{ self.tag, source[self.loc.start..self.loc.end] });
+        std.log.info("{any}: '{any}'", .{ self.tag, source[self.loc.start..self.loc.end] });
     }
 };
 
 pub const Tokenizer = struct {
     buffer: []const u8,
     index: usize,
-    // FIXME: do we need this?
     last_newline: ?usize,
 
     pub fn init(buffer: []const u8) Tokenizer {
@@ -316,13 +315,29 @@ test "transactions" {
         \\2020 abc
         \\    d:e
         \\    x:y
-    , &.{ .date, .identifier, .indentation, .identifier, .indentation, .identifier });
+    , &.{
+        .date,
+        .identifier,
+        .indentation,
+        .identifier,
+        .indentation,
+        .identifier,
+    });
 
     try testTokenize(
         \\2020 abc
         \\    d:e  $10
         \\    x:y  
-    , &.{ .date, .identifier, .indentation, .identifier, .identifier, .amount, .indentation, .identifier });
+    , &.{
+        .date,
+        .identifier,
+        .indentation,
+        .identifier,
+        .identifier,
+        .amount,
+        .indentation,
+        .identifier,
+    });
 }
 
 test "multiple transactions" {
@@ -335,5 +350,22 @@ test "multiple transactions" {
         \\  e:f   $2
         \\  c:d
     ;
-    try testTokenize(source, &.{ .date, .identifier, .indentation, .identifier, .identifier, .amount, .indentation, .identifier, .date, .identifier, .indentation, .identifier, .identifier, .amount, .indentation, .identifier });
+    try testTokenize(source, &.{
+        .date,
+        .identifier,
+        .indentation,
+        .identifier,
+        .identifier,
+        .amount,
+        .indentation,
+        .identifier,
+        .date,
+        .identifier,
+        .indentation,
+        .identifier,
+        .identifier,
+        .amount,
+        .indentation,
+        .identifier,
+    });
 }

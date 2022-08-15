@@ -17,7 +17,6 @@ pub fn build(b: *std.build.Builder) void {
     exe.setBuildMode(mode);
 
     exe.addIncludePath("./include");
-
     exe.linkLibC();
     exe.linkSystemLibrary("gmp");
     exe.linkSystemLibrary("mpfr");
