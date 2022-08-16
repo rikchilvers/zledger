@@ -3,7 +3,7 @@ const std = @import("std");
 const Posting = @import("posting.zig");
 const AccountTree = @import("account_tree.zig");
 const Ast = @import("ast.zig");
-const BigDecimal = @import("big_decimal.zig");
+const Amount = @import("amount.zig");
 
 const Self = @This();
 
@@ -29,7 +29,7 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn read(self: *Self, ast: Ast) !void {
-    var temp = BigDecimal.initAlloc(self.allocator);
+    var temp = Amount.init(self.allocator);
     try temp.set("0.0");
 
     for (ast.nodes.items(.tag)) |tag, i| {
@@ -51,7 +51,7 @@ pub fn read(self: *Self, ast: Ast) !void {
                 const amount = extractAmount(&ast, i);
                 if (amount) |a| {
                     try temp.set(a);
-                    account.addAmount(self.account_tree.accounts.items, temp);
+                    account.addAmount(self.account_tree.accounts.items, &temp);
                 }
             },
             else => {
@@ -61,7 +61,6 @@ pub fn read(self: *Self, ast: Ast) !void {
     }
 
     temp.deinit(self.allocator);
-    try BigDecimal.cleanUpMemory();
 }
 
 fn extractAccount(ast: *const Ast, token_index: usize) []const u8 {

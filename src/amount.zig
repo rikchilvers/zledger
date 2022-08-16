@@ -19,3 +19,11 @@ pub fn init(allocator: std.mem.Allocator) Self {
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     self.quantity.deinit(allocator);
 }
+
+pub fn set(self: *Self, value: []const u8) !void {
+    try self.quantity.set(value);
+}
+
+pub fn add(self: *Self, value: *Self) void {
+    self.quantity.add(value.quantity);
+}

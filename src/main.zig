@@ -1,6 +1,7 @@
 const std = @import("std");
 const parse = @import("parser.zig").parse;
 const Journal = @import("journal.zig");
+const BigDecimal = @import("big_decimal.zig");
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -32,4 +33,6 @@ pub fn main() !void {
     try journal.read(ast);
 
     journal.account_tree.toString();
+
+    try BigDecimal.cleanUpMemory();
 }

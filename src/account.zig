@@ -1,7 +1,6 @@
 const std = @import("std");
 const Amount = @import("amount.zig");
 const Posting = @import("posting.zig");
-const BigDecimal = @import("big_decimal.zig");
 
 const Self = @This();
 
@@ -28,8 +27,8 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     self.postings.deinit();
 }
 
-pub fn addAmount(self: *Self, accounts: []Self, amount: *BigDecimal) void {
-    self.amount.quantity.add(amount);
+pub fn addAmount(self: *Self, accounts: []Self, amount: *Amount) void {
+    self.amount.add(amount);
     if (self.parent) |p| {
         var parent = accounts[p];
         parent.addAmount(accounts, amount);
