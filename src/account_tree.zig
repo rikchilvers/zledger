@@ -102,14 +102,8 @@ pub fn getAccount(self: *Self, account_path: []const u8) ?*Account {
     return null;
 }
 
-pub fn toString(self: *Self) void {
-    const unbuffered_out = std.io.getStdOut().writer();
-    var buffer = std.io.bufferedWriter(unbuffered_out);
-    var out = buffer.writer();
-
-    self.printChildren(0, 0, out);
-
-    buffer.flush() catch unreachable;
+pub fn print(self: *Self, writer: anytype) void {
+    self.printChildren(0, 0, writer);
 }
 
 fn printChildren(self: *Self, account: usize, indent: u8, writer: anytype) void {
@@ -136,9 +130,6 @@ fn printChildren(self: *Self, account: usize, indent: u8, writer: anytype) void 
 }
 
 test "adds and gets accounts" {
-    std.testing.log_level = .debug;
-    std.log.info("", .{});
-
     var tree = try Self.init(std.testing.allocator);
     defer tree.deinit();
 
@@ -160,8 +151,8 @@ test "adds and gets accounts" {
 }
 
 test "prints tree" {
-    std.testing.log_level = .debug;
-    std.log.info("", .{});
+    // std.testing.log_level = .debug;
+    // std.log.info("", .{});
 
     var tree = try Self.init(std.testing.allocator);
     defer tree.deinit();
@@ -169,5 +160,6 @@ test "prints tree" {
     _ = try tree.addAccount("a:b:c");
     _ = try tree.addAccount("a:d");
 
-    tree.toString();
+    // TODO: need a testing writer
+    // tree.print(std.testing.);
 }

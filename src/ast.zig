@@ -13,10 +13,9 @@ errors: []const Error,
 
 const std = @import("std");
 const assert = std.debug.assert;
-const Token = @import("./tokenizer.zig").Token;
+const Token = @import("tokenizer.zig").Token;
 const Tree = @This();
 
-// TODO: why do we use a u32 as the offset and not, say, u8?
 pub const ByteOffset = u32;
 pub const TokenIndex = u32;
 

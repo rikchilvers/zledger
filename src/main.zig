@@ -28,11 +28,17 @@ pub fn main() !void {
         0,
     );
 
-    const ast = try parse(allocator, ptr);
+    var ast = try parse(allocator, ptr);
+    defer ast.deinit(allocator);
     var journal = try Journal.init(allocator);
+    defer journal.deinit();
     try journal.read(ast);
 
-    journal.account_tree.toString();
+    const unbuffered_out = std.io.getStdOut().writer();
+    var buffer = std.io.bufferedWriter(unbuffered_out);
+    defer buffer.flush() catch unreachable;
+    var out = buffer.writer();
+    journal.account_tree.print(out);
 
     try BigDecimal.cleanUpMemory();
 }

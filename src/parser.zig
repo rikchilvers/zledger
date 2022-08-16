@@ -157,10 +157,14 @@ const Parser = struct {
         const header = try p.parseTransactionHeader(header_index);
         const body = try p.parseTransactionBody(body_index, header);
 
-        return p.setNode(declaration_index, .{ .tag = .transaction_declaration, .main_token = date_token, .data = .{
-            .lhs = header,
-            .rhs = body,
-        } });
+        return p.setNode(declaration_index, .{
+            .tag = .transaction_declaration,
+            .main_token = date_token,
+            .data = .{
+                .lhs = header,
+                .rhs = body,
+            },
+        });
     }
 
     fn parseTransactionHeader(p: *Parser, index: usize) !Node.Index {
