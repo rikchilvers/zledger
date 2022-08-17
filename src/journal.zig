@@ -28,34 +28,83 @@ pub fn deinit(self: *Self) void {
     self.account_tree.deinit();
 }
 
+const PartialTransaction = struct {
+    /// Postings relevant to this xact.
+    /// Indexes into the Ast's nodes.
+    postings: std.ArrayList(usize),
+    /// A posting that does not have an amount.
+    /// There can only be one of these per xact.
+    incomplete_posting: ?usize,
+
+    fn init(allocator: std.mem.Allocator) PartialTransaction {
+        var self = .{
+            .postings = std.ArrayList(usize).init(allocator),
+            .incomplete_posting = null,
+        };
+
+        return self;
+    }
+
+    fn deinit(self: *PartialTransaction) void {
+        self.postings.deinit();
+    }
+
+    fn reset(self: *PartialTransaction) void {
+        self.postings.clearRetainingCapacity();
+        self.incomplete_posting = null;
+    }
+
+    fn validate(self: *PartialTransaction) void {
+        if (self.incomplete_posting) |i| {
+            std.log.info("have an incomplete posting ?? at {d}", .{i});
+        }
+    }
+};
+
+// Constructs a
 pub fn read(self: *Self, ast: Ast) !void {
     var temp = Amount.init(self.allocator);
     try temp.set("0.0");
 
+    var partial_xact = PartialTransaction.init(self.allocator);
+    defer partial_xact.deinit();
+
     for (ast.nodes.items(.tag)) |tag, i| {
         switch (tag) {
             .root => {},
-            .transaction_declaration => {
-                const main_token_index = ast.nodes.items(.main_token)[i];
+            .transaction_header => {
+                partial_xact.validate();
+                partial_xact.reset();
 
-                const token_start = ast.tokens.items(.start)[main_token_index];
-                const token_end = ast.tokens.items(.start)[main_token_index + 1];
-                const token = ast.source[token_start .. token_end - 1];
-                _ = token;
+                const date = extractField(&ast, ast.nodes.items(.main_token)[i]);
+                const data = ast.nodes.items(.data)[i];
+                const header = ast.extraData(data.lhs, Ast.Node.TransactionHeader);
+                const payee = extractOptionalField(&ast, header.payee) orelse "??";
+
+                std.log.info("'{s}'  '{s}'", .{ date, payee });
             },
             .posting => {
-                const account_path = extractAccount(&ast, i);
+                // We need to get the lhs of the posting node for the data
+                const data = ast.nodes.items(.data)[i];
+                const posting = ast.extraData(data.lhs, Ast.Node.Posting);
+
+                const account_path = extractField(&ast, posting.account);
                 const account_index = try self.account_tree.addAccount(account_path);
                 const account = &self.account_tree.accounts.items[account_index];
 
-                const amount = extractAmount(&ast, i);
+                const amount = extractOptionalField(&ast, posting.amount);
                 if (amount) |a| {
+                    std.log.info("\t'{s}'  '{s}'", .{ account_path, a });
                     try temp.set(a);
                     account.addAmount(self.account_tree.accounts.items, &temp);
+                } else {
+                    std.log.info("\t'{s}'", .{account_path});
+                    if (partial_xact.incomplete_posting != null) unreachable;
+                    partial_xact.incomplete_posting = i;
                 }
             },
             else => {
-                std.log.info("{d: >2}: {} = {s}", .{ i, tag, "???" });
+                // std.log.info(">> index {d: >2}: {} = {s}", .{ i, tag, "???" });
             },
         }
     }
@@ -63,27 +112,17 @@ pub fn read(self: *Self, ast: Ast) !void {
     temp.deinit(self.allocator);
 }
 
-fn extractAccount(ast: *const Ast, token_index: usize) []const u8 {
-    const index = ast.nodes.items(.main_token)[token_index];
+fn extractField(ast: *const Ast, index: usize) []const u8 {
     const start = ast.tokens.items(.start)[index];
-    const end = ast.tokens.items(.start)[index + 1];
-    // TODO: move this trim to the tokenizer
-    return std.mem.trimRight(u8, ast.source[start .. end - 1], " ");
+    const end = ast.tokens.items(.end)[index];
+    return ast.source[start..end];
 }
 
-fn extractAmount(ast: *const Ast, token_index: usize) ?[]const u8 {
-    const index = ast.nodes.items(.data)[token_index].rhs;
-    const extra = Ast.extraData(ast.*, index, Ast.Node.Posting).amount;
-
-    if (extra == 0) return null;
-
-    const start = ast.tokens.items(.start)[extra];
-    const end = ast.tokens.items(.start)[extra + 1];
-
-    // When the amount is in the final posting of a transaction, we can end up with a trailing
-    // new line char so we trim here.
-    // TODO: could this be handled in the tokenizer?
-    return std.mem.trimRight(u8, ast.source[start .. end - 1], " \n\r\t\x0A");
+fn extractOptionalField(ast: *const Ast, index: usize) ?[]const u8 {
+    if (index == 0) return null;
+    const start = ast.tokens.items(.start)[index];
+    const end = ast.tokens.items(.end)[index];
+    return ast.source[start..end];
 }
 
 pub fn addPosting(self: *Self, posting: Posting) !usize {
@@ -120,4 +159,35 @@ test "reads accounts" {
     defer journal.deinit();
 
     try journal.read(ast);
+}
+
+test "correctly parses postings" {
+    std.testing.log_level = .debug;
+    std.log.info("", .{});
+
+    const source =
+        \\2020-01-02
+        \\  a:b   $1
+        \\  c:d   $-1
+        \\
+        \\2020-01-03  xyz
+        \\  e:f   $2
+        \\  c:d
+    ;
+
+    const allocator = std.testing.allocator;
+
+    const parse = @import("parser.zig").parse;
+    var ast = try parse(allocator, source);
+    defer ast.deinit(allocator);
+
+    var journal = try Self.init(allocator);
+    defer journal.deinit();
+    try journal.read(ast);
+
+    const unbuffered_out = std.io.getStdOut().writer();
+    var buffer = std.io.bufferedWriter(unbuffered_out);
+    defer buffer.flush() catch unreachable;
+    var out = buffer.writer();
+    journal.account_tree.print(out);
 }

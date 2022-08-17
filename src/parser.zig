@@ -24,6 +24,7 @@ pub fn parse(gpa: Allocator, source: []const u8) Allocator.Error!Ast {
         try tokens.append(gpa, .{
             .tag = token.tag,
             .start = @intCast(u32, token.loc.start),
+            .end = @intCast(u32, token.loc.end),
             // we can compute the end with: tokens[current + 1].start - 1
         });
         if (token.tag == .eof) break;
@@ -143,85 +144,49 @@ const Parser = struct {
     }
 
     fn expectTransaction(p: *Parser) !Node.Index {
-        const date_token = p.token_index;
-
-        // We want these three to be next to each other
-        const declaration_index = try p.reserveNode();
-        const header_index = try p.reserveNode();
-        const body_index = try p.reserveNode();
-
-        const header = try p.parseTransactionHeader(header_index);
-        const body = try p.parseTransactionBody(body_index, header);
-
-        return p.setNode(declaration_index, .{
-            .tag = .transaction_declaration,
-            .main_token = date_token,
-            .data = .{
-                .lhs = header,
-                .rhs = body,
-            },
-        });
-    }
-
-    fn parseTransactionHeader(p: *Parser, index: usize) !Node.Index {
-        // TODO: eat docs
-
+        // get the header
         const date = try p.expectToken(.date);
         const status = p.eatToken(.status) orelse 0;
         const payee = p.eatToken(.identifier) orelse 0;
-
-        var header_extra: Node.Index = 0;
-        if (status + payee > 0) {
-            header_extra = try p.addExtra(Node.TransactionHeader{
-                .status = status,
-                .payee = payee,
-                .comment = 0, // FIXME: parse
-            });
-        }
-
-        return p.setNode(index, .{
+        // TODO: parse comments in header line
+        const comment = 0;
+        const header = try p.addNode(.{
             .tag = .transaction_header,
             .main_token = date,
             .data = .{
-                .lhs = header_extra,
+                .lhs = try p.addExtra(Node.TransactionHeader{
+                    .status = status,
+                    .payee = payee,
+                    .comment = comment,
+                }),
                 .rhs = 0,
             },
         });
-    }
 
-    fn parseTransactionBody(p: *Parser, index: usize, header_index: Node.Index) !Node.Index {
-        var first_posting = try p.expectPosting(header_index);
-        var last_posting = try p.expectPosting(header_index);
+        // TODO: maybe comment
+        _ = try p.expectPosting(header);
+        // TODO: maybe comment
+        _ = try p.expectPosting(header);
+        // more
         while (true) {
-            const posting = try p.expectPostingRecoverable(header_index);
+            // TODO: maybe comment
+            const posting = try p.expectPostingRecoverable(header);
             if (posting == 0) break;
-            last_posting = posting;
         }
+        // TODO: maybe comment
 
-        return p.setNode(
-            index,
-            .{
-                .tag = .transaction_body,
-                .main_token = 0,
-                .data = .{
-                    .lhs = first_posting,
-                    .rhs = last_posting,
-                },
-            },
-        );
+        return header;
     }
 
-    fn expectPostingRecoverable(p: *Parser, body_index: Node.Index) !Node.Index {
-        return p.expectPosting(body_index) catch |err| switch (err) {
+    fn expectPostingRecoverable(p: *Parser, header_index: Node.Index) !Node.Index {
+        return p.expectPosting(header_index) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.ParseError => return null_node,
         };
     }
 
     fn expectPosting(p: *Parser, header_index: Node.Index) !Node.Index {
-        // p.eatComments();
-
-        _ = try p.expectToken(.indentation);
+        const indentation = try p.expectToken(.indentation);
 
         const account = try p.expectToken(.identifier);
         var commodity = p.eatToken(.identifier);
@@ -230,16 +195,17 @@ const Parser = struct {
             commodity = p.eatToken(.identifier);
         }
 
-        return try p.addNode(.{
+        return p.addNode(.{
             .tag = .posting,
-            .main_token = account,
+            .main_token = indentation,
             .data = .{
-                .lhs = header_index,
-                .rhs = try p.addExtra(Node.Posting{
+                .lhs = try p.addExtra(Node.Posting{
+                    .account = account,
                     .commodity = commodity orelse 0,
                     .amount = amount orelse 0,
                     .comment = 0, // FIXME: parse
                 }),
+                .rhs = header_index,
             },
         });
     }
@@ -320,7 +286,12 @@ test "transaction decl and body" {
     var tree = try parse(std.testing.allocator, source);
     defer tree.deinit(std.testing.allocator);
 
-    try std.testing.expectEqualSlices(Node.Tag, &.{ .root, .transaction_declaration, .transaction_header, .transaction_body, .posting, .posting }, tree.nodes.items(.tag));
+    try std.testing.expectEqualSlices(Node.Tag, &.{
+        .root,
+        .transaction_header,
+        .posting,
+        .posting,
+    }, tree.nodes.items(.tag));
 }
 
 test "multiple transactions" {
@@ -336,7 +307,15 @@ test "multiple transactions" {
     var tree = try parse(std.testing.allocator, source);
     defer tree.deinit(std.testing.allocator);
 
-    try std.testing.expectEqualSlices(Node.Tag, &.{ .root, .transaction_declaration, .transaction_header, .transaction_body, .posting, .posting, .transaction_declaration, .transaction_header, .transaction_body, .posting, .posting }, tree.nodes.items(.tag));
+    try std.testing.expectEqualSlices(Node.Tag, &.{
+        .root,
+        .transaction_header,
+        .posting,
+        .posting,
+        .transaction_header,
+        .posting,
+        .posting,
+    }, tree.nodes.items(.tag));
 }
 
 // test "postings" {

@@ -22,6 +22,7 @@ pub const TokenIndex = u32;
 pub const TokenList = std.MultiArrayList(struct {
     tag: Token.Tag,
     start: Ast.ByteOffset,
+    end: Ast.ByteOffset,
 });
 pub const NodeList = std.MultiArrayList(Node);
 
@@ -64,36 +65,35 @@ pub const Node = struct {
     pub const Tag = enum {
         root,
 
-        // Atoms
-        identifier,
-        commodity,
+        /// main_token: import keyword
+        /// lhs: path
+        /// rhs: unused
+        import,
 
-        // Molecules
+        /// main_token: the comment
+        /// lhs: transaction_header if in a transaction
+        /// rhs: unused
+        comment_line,
+
+        /// main_token: begin keyword
+        /// lhs: transaction_header if in a transaction
+        /// rhs: end keyword
+        comment_block,
 
         /// main_token: date
-        /// lhs: header
-        /// rhs: body
-        transaction_declaration,
-
-        /// main_token: date
-        /// lhs: extra_data
+        /// lhs: TransactionHeader in extra_data
         /// rhs: unused
         transaction_header,
 
-        /// main_token: unused
-        /// lhs: index of first posting
-        /// rhs: index of final posting
-        transaction_body, // TODO: change to span
-
-        /// main_token: account
-        /// lhs: index of transaction_header
-        /// rhs: index to data
+        /// main_token: indentation that starts the posting
+        /// lhs: Posting in extra_data
+        /// rhs: transaction_header node index
         posting,
     };
 
     /// Information associated with the Node
     /// lhs and rhs may be used differently for each tag
-    /// either may point to values in the Tree's extra_data array
+    /// either may point to values in the Ast's extra_data array
     pub const Data = struct {
         lhs: Index,
         rhs: Index,
@@ -106,6 +106,7 @@ pub const Node = struct {
     };
 
     pub const Posting = struct {
+        account: Index,
         commodity: Index, // 0 if null
         amount: Index, // 0 if null
         comment: Index, // 0 if null
