@@ -94,12 +94,28 @@ pub fn addPosting(self: *Self, posting: Posting) !usize {
 }
 
 test "reads accounts" {
-    const input = @import("tests.zig").TestString;
-    const parse = @import("parser.zig").parse;
+    std.testing.log_level = .debug;
+    std.log.info("", .{});
+
+    const source =
+        \\2022-04-11 ! Payee One
+        \\  a       £-10.50
+        \\  b:c     £ 10.50
+        \\
+        \\2022-04-12 * Payee Two
+        \\  a       £-20
+        \\  b:d     £ 20
+        \\2022-04-11 Payee One
+        \\  a       £-100
+        \\  b:c     £ 100
+    ;
+
     const allocator = std.testing.allocator;
 
-    var ast = try parse(allocator, input);
+    const parse = @import("parser.zig").parse;
+    var ast = try parse(allocator, source);
     defer ast.deinit(allocator);
+
     var journal = try Self.init(allocator);
     defer journal.deinit();
 

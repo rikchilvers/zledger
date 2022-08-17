@@ -1,4 +1,4 @@
-//! Abstract Syntax Tree for Zig source code.
+//! Abstract Syntax Ast for Zig source code.
 
 /// Reference to externally-owned data.
 source: []const u8,
@@ -14,18 +14,18 @@ errors: []const Error,
 const std = @import("std");
 const assert = std.debug.assert;
 const Token = @import("tokenizer.zig").Token;
-const Tree = @This();
+const Ast = @This();
 
 pub const ByteOffset = u32;
 pub const TokenIndex = u32;
 
 pub const TokenList = std.MultiArrayList(struct {
     tag: Token.Tag,
-    start: Tree.ByteOffset,
+    start: Ast.ByteOffset,
 });
 pub const NodeList = std.MultiArrayList(Node);
 
-pub fn deinit(tree: *Tree, gpa: std.mem.Allocator) void {
+pub fn deinit(tree: *Ast, gpa: std.mem.Allocator) void {
     tree.tokens.deinit(gpa);
     tree.nodes.deinit(gpa);
     gpa.free(tree.extra_data);
@@ -112,7 +112,7 @@ pub const Node = struct {
     };
 };
 
-pub fn extraData(tree: Tree, index: usize, comptime T: type) T {
+pub fn extraData(tree: Ast, index: usize, comptime T: type) T {
     const fields = std.meta.fields(T);
     var result: T = undefined;
     inline for (fields) |field, i| {

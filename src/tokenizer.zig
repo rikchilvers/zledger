@@ -7,20 +7,6 @@ pub const Token = struct {
     tag: Tag,
     loc: Loc,
 
-    pub const keywords = std.ComptimeStringMap(Tag, .{
-        .{ "account", .keyword_account },
-        .{ "apply", .keyword_partial },
-        .{ "import", .keyword_import },
-        .{ "alias", .keyword_alias },
-        .{ "apply account", .keyword_apply_account },
-        .{ "apply tag", .keyword_apply_tag },
-    });
-
-    pub fn getKeyword(bytes: []const u8) ?Tag {
-        // std.log.info("checking", .{});
-        return keywords.get(bytes);
-    }
-
     pub const Tag = enum {
         indentation,
         comment,
@@ -43,6 +29,20 @@ pub const Token = struct {
         start: usize,
         end: usize,
     };
+
+    pub const keywords = std.ComptimeStringMap(Tag, .{
+        .{ "account", .keyword_account },
+        .{ "apply", .keyword_partial },
+        .{ "import", .keyword_import },
+        .{ "alias", .keyword_alias },
+        .{ "apply account", .keyword_apply_account },
+        .{ "apply tag", .keyword_apply_tag },
+    });
+
+    pub fn getKeyword(bytes: []const u8) ?Tag {
+        // std.log.info("checking", .{});
+        return keywords.get(bytes);
+    }
 
     pub fn debug(self: Token, source: []const u8) void {
         std.log.info("{any}: '{s}'", .{ self.tag, source[self.loc.start..self.loc.end] });

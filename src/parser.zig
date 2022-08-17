@@ -3,9 +3,9 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
-const Token = @import("./tokenizer.zig").Token;
+const Token = @import("tokenizer.zig").Token;
 
-const Ast = @import("./ast.zig");
+const Ast = @import("ast.zig");
 const Node = Ast.Node;
 const TokenIndex = Ast.TokenIndex;
 
@@ -34,7 +34,6 @@ pub fn parse(gpa: Allocator, source: []const u8) Allocator.Error!Ast {
         .source = source,
         .errors = std.ArrayList(Ast.Error).init(gpa),
         .nodes = .{},
-        .scratch = std.ArrayList(Node.Index).init(gpa),
         .extra_data = std.ArrayList(Node.Index).init(gpa),
         .token_tags = tokens.items(.tag),
         .token_starts = tokens.items(.start),
@@ -42,7 +41,6 @@ pub fn parse(gpa: Allocator, source: []const u8) Allocator.Error!Ast {
     };
     defer parser.errors.deinit();
     defer parser.nodes.deinit(gpa);
-    defer parser.scratch.deinit();
     defer parser.extra_data.deinit();
 
     // TODO: would it be possible to work out the ratio of tokens to AST nodes for ledger files?
@@ -77,8 +75,6 @@ const Parser = struct {
     /// Additional information associated with a Node (e.g. postings for a transaction)
     /// Use Ast.extraData() to extra the data
     extra_data: std.ArrayList(Node.Index),
-    /// Used to transiently hold references to Node.Indexes as the parser works
-    scratch: std.ArrayList(Node.Index),
 
     /// token_tags.len == token_starts.len as they're the deconstructed results of tokenization
     token_tags: []const Token.Tag,
