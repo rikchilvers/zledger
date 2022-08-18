@@ -20,8 +20,17 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     self.quantity.deinit(allocator);
 }
 
-pub fn set(self: *Self, value: []const u8) !void {
-    try self.quantity.set(value);
+pub fn zero(self: *Self) void {
+    self.set(u0, 0);
+    self.quantity.setPositive();
+}
+
+pub fn set(self: *Self, comptime T: type, value: T) void {
+    self.quantity.set(T, value);
+}
+
+pub fn setNegative(self: *Self) void {
+    self.quantity.setNegative();
 }
 
 pub fn add(self: *Self, value: *Self) void {

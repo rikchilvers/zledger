@@ -46,10 +46,25 @@ pub fn sign(self: Self) i1 {
     return -1;
 }
 
-pub fn set(self: *Self, value: []const u8) !void {
-    // NOTE: We're ignoring the error reporting mpfr offers us here by passing null as
-    // the third parameter.
-    _ = c.mpfr_strtofr(&self.internal, value.ptr, null, 10, c.MPFR_RNDN);
+pub fn setNegative(self: *Self) void {
+    _ = c.mpfr_neg(&self.internal, &self.internal, c.MPFR_RNDN);
+}
+
+pub fn setPositive(self: *Self) void {
+    _ = c.mpfr_abs(&self.internal, &self.internal, c.MPFR_RNDN);
+}
+
+pub fn set(self: *Self, comptime T: type, value: T) void {
+    switch (@typeInfo(T)) {
+        .Pointer => {
+            // NOTE: We're ignoring the error reporting mpfr offers us here
+            // by passing null as the third parameter.
+            _ = c.mpfr_strtofr(&self.internal, value.ptr, null, 10, c.MPFR_RNDN);
+        },
+        .Int => _ = c.mpfr_set_ui(&self.internal, value, c.MPFR_RNDN),
+        .Float => _ = c.mpfr_set_flt(&self.internal, value, c.MPFR_RNDN),
+        else => @compileError("unknown type for setting BigDecimal"),
+    }
 }
 
 pub fn add(self: *Self, addend: *Self) void {

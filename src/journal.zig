@@ -64,7 +64,7 @@ const PartialTransaction = struct {
 // Constructs a
 pub fn read(self: *Self, ast: Ast) !void {
     var temp = Amount.init(self.allocator);
-    try temp.set("0.0");
+    temp.zero();
 
     var partial_xact = PartialTransaction.init(self.allocator);
     defer partial_xact.deinit();
@@ -95,7 +95,7 @@ pub fn read(self: *Self, ast: Ast) !void {
                 const amount = extractOptionalField(&ast, posting.amount);
                 if (amount) |a| {
                     std.log.info("\t'{s}'  '{s}'", .{ account_path, a });
-                    try temp.set(a);
+                    temp.set([]const u8, a);
                     account.addAmount(self.account_tree.accounts.items, &temp);
                 } else {
                     std.log.info("\t'{s}'", .{account_path});
