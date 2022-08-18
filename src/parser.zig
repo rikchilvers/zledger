@@ -171,7 +171,7 @@ const Parser = struct {
         while (true) {
             // TODO: maybe comment
             const posting = try p.expectPostingRecoverable(header);
-            if (posting == 0) break;
+            if (posting == null_node) break;
         }
         // TODO: maybe comment
 
@@ -253,7 +253,6 @@ const Parser = struct {
                 copy.token -= 1;
                 return p.errors.append(copy);
             },
-            // else => {},
         }
         try p.errors.append(msg);
     }
