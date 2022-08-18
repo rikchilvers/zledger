@@ -29,34 +29,36 @@ pub fn deinit(self: *Self) void {
 }
 
 const PartialTransaction = struct {
-    /// Postings relevant to this xact.
-    /// Indexes into the Ast's nodes.
-    postings: std.ArrayList(usize),
-    /// A posting that does not have an amount.
+    sum: Amount,
+    /// The account from a posting with no account.
     /// There can only be one of these per xact.
-    incomplete_posting: ?usize,
+    /// We don't store a reference to the account because it might have been invalidated before
+    /// we use it (e.g. if the AccountTree's backing ArrayList was resized).
+    incomplete_posting_account: ?usize,
 
     fn init(allocator: std.mem.Allocator) PartialTransaction {
         var self = .{
-            .postings = std.ArrayList(usize).init(allocator),
-            .incomplete_posting = null,
+            .sum = Amount.init(allocator),
+            .incomplete_posting_account = null,
         };
 
         return self;
     }
 
-    fn deinit(self: *PartialTransaction) void {
-        self.postings.deinit();
+    fn deinit(self: *PartialTransaction, allocator: std.mem.Allocator) void {
+        self.sum.deinit(allocator);
     }
 
     fn reset(self: *PartialTransaction) void {
-        self.postings.clearRetainingCapacity();
-        self.incomplete_posting = null;
+        self.sum.zero();
+        self.incomplete_posting_account = null;
     }
 
-    fn validate(self: *PartialTransaction) void {
-        if (self.incomplete_posting) |i| {
-            std.log.info("have an incomplete posting ?? at {d}", .{i});
+    fn validate(self: *PartialTransaction, tree: *AccountTree) void {
+        if (self.incomplete_posting_account) |i| {
+            const account = &tree.accounts.items[i];
+            self.sum.setNegative();
+            account.amount.add(&self.sum);
         }
     }
 };
@@ -67,13 +69,13 @@ pub fn read(self: *Self, ast: Ast) !void {
     temp.zero();
 
     var partial_xact = PartialTransaction.init(self.allocator);
-    defer partial_xact.deinit();
+    defer partial_xact.deinit(self.allocator);
 
     for (ast.nodes.items(.tag)) |tag, i| {
         switch (tag) {
             .root => {},
             .transaction_header => {
-                partial_xact.validate();
+                partial_xact.validate(&self.account_tree);
                 partial_xact.reset();
 
                 const date = extractField(&ast, ast.nodes.items(.main_token)[i]);
@@ -97,10 +99,11 @@ pub fn read(self: *Self, ast: Ast) !void {
                     std.log.info("\t'{s}'  '{s}'", .{ account_path, a });
                     temp.set([]const u8, a);
                     account.addAmount(self.account_tree.accounts.items, &temp);
+                    partial_xact.sum.add(&temp);
                 } else {
                     std.log.info("\t'{s}'", .{account_path});
-                    if (partial_xact.incomplete_posting != null) unreachable;
-                    partial_xact.incomplete_posting = i;
+                    if (partial_xact.incomplete_posting_account != null) unreachable;
+                    partial_xact.incomplete_posting_account = account_index;
                 }
             },
             else => {
@@ -108,6 +111,8 @@ pub fn read(self: *Self, ast: Ast) !void {
             },
         }
     }
+    partial_xact.validate(&self.account_tree);
+    partial_xact.reset();
 
     temp.deinit(self.allocator);
 }
