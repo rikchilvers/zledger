@@ -188,7 +188,15 @@ const Parser = struct {
     fn expectPosting(p: *Parser, header_index: Node.Index) !Node.Index {
         const indentation = try p.expectToken(.indentation);
 
-        const account = try p.expectToken(.identifier);
+        // If the user has called their account one of the keywords, the tokenizer will have
+        // classed it as such so we need to handle both .identifier and .keyword_??? here.
+        var account: TokenIndex = undefined;
+        const token = p.token_tags[p.token_index];
+        if (token != .identifier and token.isKeyword()) {
+            account = p.nextToken();
+        } else {
+            account = try p.expectToken(.identifier);
+        }
         var commodity = p.eatToken(.identifier);
         const amount = p.eatToken(.amount);
         if (commodity == null and amount != null) {

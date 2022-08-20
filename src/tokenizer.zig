@@ -15,14 +15,27 @@ pub const Token = struct {
         status,
         commodity,
         amount,
-        keyword_account,
         keyword_partial,
+        keyword_account,
         keyword_apply_account,
         keyword_apply_tag,
         keyword_import,
         keyword_alias,
         invalid,
         eof,
+
+        pub fn isKeyword(self: Token.Tag) bool {
+            switch (self) {
+                .keyword_partial,
+                .keyword_account,
+                .keyword_apply_account,
+                .keyword_apply_tag,
+                .keyword_import,
+                .keyword_alias,
+                => return true,
+                else => return false,
+            }
+        }
     };
 
     pub const Loc = struct {
@@ -75,6 +88,11 @@ pub const Tokenizer = struct {
         amount,
     };
 
+    pub fn charAtStartOfLine(self: *Tokenizer) bool {
+        const last_char = if (self.index > 0) self.buffer[self.index - 1] else '0';
+        return (last_char == '\n' or last_char == '\r') or self.index == 0;
+    }
+
     pub fn next(self: *Tokenizer) Token {
         var state: State = .start;
         var result = Token{
@@ -91,8 +109,8 @@ pub const Tokenizer = struct {
             switch (state) {
                 .start => switch (c) {
                     '\n', '\r' => {
-                        self.last_newline = self.index;
                         seen_spaces = 0;
+                        self.last_newline = self.index;
                         result.loc.start = self.index + 1;
                     },
 
@@ -114,8 +132,7 @@ pub const Tokenizer = struct {
                     },
 
                     '0'...'9' => {
-                        // are we at the start of a line?
-                        if (self.index == 0 or (self.index > 0 and (self.buffer[self.index - 1] == '\n' or self.buffer[self.index - 1] == '\r'))) {
+                        if (self.charAtStartOfLine()) {
                             state = .date;
                             result.tag = .date;
                         } else {
@@ -148,8 +165,7 @@ pub const Tokenizer = struct {
                         // We only care about indentation when it starts from the beginning of a line.
                         // After that, it's not useful to output a token for it since it doesn't have meaning
                         // in a ledger file.
-                        // During parsing, we can choose to ignore indentation that does not come after a transaction
-                        // declaration.
+                        // During parsing, we can choose to ignore indentation that does not come after a transaction declaration.
 
                         // check if we've only seen whitespace on this line so far
                         // FIXME: could we make this faster? is there a way of not having to backtrack like this?
@@ -201,6 +217,7 @@ pub const Tokenizer = struct {
                     },
                 },
 
+                // Could also be a keyword
                 .identifier => switch (c) {
                     '0'...'9', '\n', '\r', '+', '-' => break,
                     ' ', '\t' => {
@@ -210,7 +227,16 @@ pub const Tokenizer = struct {
                             break;
                         }
 
-                        // FIXME: this will cause lots of checks against the map
+                        // There are no reserved words in ledger files which means that keywords
+                        // (e.g., account) can be used as identifiers. That means that when we
+                        // encounter a space in an identifier, it could mean that
+                        //      more is coming (e.g., Expenses:A Store Name)
+                        //      that a keyword has been used (e.g., apply[ ]tag).
+                        // As we can't know which is happening at the tokinzation stage, we eagerly
+                        // classify matching words as keywords and let the parser handle it.
+                        // We also cannot use a heuristic such as the token starting from the beginning
+                        // of a line or being indented because how that is handled depends on what tokens
+                        // have come before, which this tokenizer is not aware of.
                         if (Token.getKeyword(self.buffer[result.loc.start..self.index])) |tag| {
                             if (tag == .keyword_partial) continue;
                             result.tag = tag;
@@ -219,8 +245,6 @@ pub const Tokenizer = struct {
                     },
                     ';', '#' => {
                         if (seen_spaces >= max_spaces_in_identifier) {
-                            // need to return the identifier and move into the comment
-                            // so we backtrack to catch the comment opener
                             self.index -= 1;
                             break;
                         }

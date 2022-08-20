@@ -138,9 +138,6 @@ pub fn addPosting(self: *Self, posting: Posting) !usize {
 }
 
 test "reads accounts" {
-    std.testing.log_level = .debug;
-    std.log.info("", .{});
-
     const source =
         \\2022-04-11 ! Payee One
         \\  a       £-10.50
