@@ -20,12 +20,10 @@ pub fn parse(gpa: Allocator, source: []const u8) Allocator.Error!Ast {
     var tokenizer = Tokenizer.init(source);
     while (true) {
         const token = tokenizer.next();
-        // std.log.info("tokenizer saw: {s}", .{token.tag});
         try tokens.append(gpa, .{
             .tag = token.tag,
             .start = @intCast(u32, token.loc.start),
             .end = @intCast(u32, token.loc.end),
-            // we can compute the end with: tokens[current + 1].start - 1
         });
         if (token.tag == .eof) break;
     }
@@ -244,6 +242,10 @@ const Parser = struct {
 
     fn expectToken(p: *Parser, tag: Token.Tag) Error!TokenIndex {
         if (p.token_tags[p.token_index] != tag) {
+            // std.log.err("expectToken() found a {any}, not a {any}", .{
+            //     p.token_tags[p.token_index],
+            //     tag,
+            // });
             return p.fail(.{
                 .tag = .expected_token,
                 .token = p.token_index,
@@ -301,15 +303,15 @@ test "transaction decl and body" {
     }, tree.nodes.items(.tag));
 }
 
-test "multiple transactions" {
+test "multiple transactions with keyword account names" {
     const source: []const u8 =
         \\2020-01-02  abc
-        \\  a:b   $1
-        \\  c:d
+        \\  apply account   $1
+        \\  apply tag
         \\
         \\2020-01-03 ! xyz
-        \\  e:f   $2
-        \\  c:d
+        \\  account   $2
+        \\  alias
     ;
     var tree = try parse(std.testing.allocator, source);
     defer tree.deinit(std.testing.allocator);

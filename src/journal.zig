@@ -167,14 +167,30 @@ test "correctly parses postings" {
     std.testing.log_level = .debug;
     std.log.info("", .{});
 
+    // const source =
+    //     \\2020-01-02
+    //     \\  a:b   $1
+    //     \\  c:d   $-1
+    //     \\
+    //     \\2020-01-03  xyz
+    //     \\
+    //     \\  e:f   $2
+    //     \\  a:b
+    //     \\  c:d   $2
+    // ;
+
     const source =
-        \\2020-01-02
-        \\  a:b   $1
-        \\  c:d   $-1
+        \\2022-04-11 ! Test payee
+        \\  account   £-10.01
+        \\  another:account   £10.01
         \\
-        \\2020-01-03  xyz
-        \\  e:f   $2
-        \\  c:d
+        \\2022-04-12 ! Test payee
+        \\  account
+        \\  another:account   £5
+        \\
+        \\2022-04-11 ! Test payee
+        \\  account   £-100
+        \\  another:account
     ;
 
     const allocator = std.testing.allocator;

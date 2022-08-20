@@ -53,7 +53,6 @@ pub const Token = struct {
     });
 
     pub fn getKeyword(bytes: []const u8) ?Tag {
-        // std.log.info("checking", .{});
         return keywords.get(bytes);
     }
 

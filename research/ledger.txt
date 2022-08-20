@@ -1,11 +1,19 @@
-2022-04-11 ! Test payee
-  account   £-10.01
+account test
+  alias testee
+
+account test
+
+  alias bloop
+
+2022-04-11 ! Test payee ; comment
+  testee   £-10.01
   another:account   £10.01
 
-2022-04-12 ! Test payee
-  account
-  another:account   £10
+2022-04-12 ! Test payee  ; comment 2
+  bloop
+  another:account   £5
 
 2022-04-11 ! Test payee
   account   £-100
   another:account
+
