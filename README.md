@@ -1,6 +1,6 @@
-# pta - plain text accounting
+# zledger
 
-Not quite a rewrite of (h)ledger in zig.
+zledger is a command-line tool to manage your finances. It aims to combine the simplicity of plain text accounting software such as ([h](https://github.com/simonmichael/hledger))[ledger](https://github.com/ledger/ledger) with built in envelope budgeting akin to [YNAB](https://www.youneedabudget.com/).
 
 ## Goal
 
